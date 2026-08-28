@@ -11,7 +11,6 @@ from src.data import get_dataloaders
 from src.models import build_model
 
 
-
 def set_seed(seed):
     """Set random seeds for reproducible experiments."""
     random.seed(seed)
@@ -23,12 +22,18 @@ def set_seed(seed):
 
 
 def save_checkpoint(model, checkpoint_path):
+    """Save model weights to disk."""
     checkpoint_path = Path(checkpoint_path)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(model.state_dict(), checkpoint_path)
+
+    torch.save(
+        model.state_dict(),
+        checkpoint_path,
+    )
 
 
 def load_config(path):
+    """Load experiment configuration from YAML."""
     with open(path, "r") as file:
         return yaml.safe_load(file)
 
@@ -39,7 +44,10 @@ def train_one_epoch(
     criterion,
     optimizer,
     device,
+    scaler=None,
+    amp_enabled=False,
 ):
+    """Train the model for one epoch."""
     model.train()
 
     total_loss = 0.0
@@ -55,27 +63,33 @@ def train_one_epoch(
             .to(device)
         )
 
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
 
-        logits = model(images)
+        with torch.autocast(
+            device_type=device.type,
+            enabled=amp_enabled,
+        ):
+            logits = model(images)
 
-        loss = criterion(
-            logits,
-            labels,
-        )
+            loss = criterion(
+                logits,
+                labels,
+            )
 
-        loss.backward()
-
-        optimizer.step()
+        if amp_enabled:
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            optimizer.step()
 
         total_loss += (
             loss.item()
             * images.size(0)
         )
 
-        probabilities = torch.sigmoid(
-            logits
-        )
+        probabilities = torch.sigmoid(logits)
 
         predictions = (
             probabilities >= 0.5
@@ -87,13 +101,8 @@ def train_one_epoch(
 
         total_samples += images.size(0)
 
-    average_loss = (
-        total_loss / total_samples
-    )
-
-    accuracy = (
-        total_correct / total_samples
-    )
+    average_loss = total_loss / total_samples
+    accuracy = total_correct / total_samples
 
     return average_loss, accuracy
 
@@ -103,7 +112,9 @@ def validate_one_epoch(
     val_loader,
     criterion,
     device,
+    amp_enabled=False,
 ):
+    """Evaluate the model for one epoch."""
     model.eval()
 
     total_loss = 0.0
@@ -120,21 +131,23 @@ def validate_one_epoch(
                 .to(device)
             )
 
-            logits = model(images)
+            with torch.autocast(
+                device_type=device.type,
+                enabled=amp_enabled,
+            ):
+                logits = model(images)
 
-            loss = criterion(
-                logits,
-                labels,
-            )
+                loss = criterion(
+                    logits,
+                    labels,
+                )
 
             total_loss += (
                 loss.item()
                 * images.size(0)
             )
 
-            probabilities = torch.sigmoid(
-                logits
-            )
+            probabilities = torch.sigmoid(logits)
 
             predictions = (
                 probabilities >= 0.5
@@ -146,16 +159,10 @@ def validate_one_epoch(
 
             total_samples += images.size(0)
 
-    average_loss = (
-        total_loss / total_samples
-    )
-
-    accuracy = (
-        total_correct / total_samples
-    )
+    average_loss = total_loss / total_samples
+    accuracy = total_correct / total_samples
 
     return average_loss, accuracy
-
 
 
 def fit(
@@ -167,26 +174,36 @@ def fit(
     device,
     epochs,
     checkpoint_path,
+    amp_enabled=False,
 ):
     """Train and validate the model across multiple epochs."""
-
     best_val_loss = float("inf")
     history = []
 
+    scaler = torch.amp.GradScaler(
+        "cuda",
+        enabled=amp_enabled,
+    )
+
+    print("AMP enabled:", amp_enabled)
+
     for epoch in range(1, epochs + 1):
         train_loss, train_accuracy = train_one_epoch(
-            model,
-            train_loader,
-            criterion,
-            optimizer,
-            device,
+            model=model,
+            train_loader=train_loader,
+            criterion=criterion,
+            optimizer=optimizer,
+            device=device,
+            scaler=scaler,
+            amp_enabled=amp_enabled,
         )
 
         val_loss, val_accuracy = validate_one_epoch(
-            model,
-            val_loader,
-            criterion,
-            device,
+            model=model,
+            val_loader=val_loader,
+            criterion=criterion,
+            device=device,
+            amp_enabled=amp_enabled,
         )
 
         print(
@@ -249,6 +266,11 @@ def main():
         else "cpu"
     )
 
+    amp_enabled = bool(
+        config.get("amp", False)
+        and device.type == "cuda"
+    )
+
     model = build_model(
         pretrained=config["pretrained"]
     ).to(device)
@@ -276,7 +298,7 @@ def main():
     print("Model:", model.__class__.__name__)
     print("Loss:", criterion.__class__.__name__)
     print("Optimizer:", optimizer.__class__.__name__)
-
+    print("AMP:", amp_enabled)
     print("Manifest:", args.manifest)
 
     fit(
@@ -288,6 +310,7 @@ def main():
         device=device,
         epochs=config["epochs"],
         checkpoint_path=checkpoint_path,
+        amp_enabled=amp_enabled,
     )
 
 
