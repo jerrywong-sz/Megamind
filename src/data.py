@@ -1,6 +1,12 @@
 """Shared data-loading and preprocessing utilities."""
 
+
+import pandas as pd
+import torch
+from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
+from torchvision import transforms
+from PIL import Image
 
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
@@ -26,3 +32,65 @@ def get_eval_transform() -> transforms.Compose:
         transforms.ToTensor(),
         transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
     ])
+
+def get_train_transform() -> transforms.Compose:
+    """Build the image transform used for Experiment A training."""
+    return transforms.Compose([
+        transforms.Resize((256, 256)),
+        transforms.RandomCrop(224),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+    ])
+class ManifestDataset(Dataset):
+    """The official dataset loader that relies on the CSV manifest."""
+    def __init__(self, manifest_path: str, split: str, transform=None):
+        self.df = pd.read_csv(manifest_path)
+        # Filter down to only the requested split (train, val, or test)
+        self.df = self.df[self.df['split'] == split].reset_index(drop=True)
+        self.transform = transform
+        
+    def __len__(self):
+        return len(self.df)
+        
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+        # Always convert to RGB to prevent format bias crashes later
+        img = Image.open(row['image_path']).convert('RGB')
+        
+        if self.transform:
+            img = self.transform(img)
+            
+        label = torch.tensor([row['label']], dtype=torch.float32)
+        
+        # Pass metadata back so Person 4 (Evaluation Lead) can analyze errors later
+        metadata = {
+            "image_path": row['image_path'],
+            "dataset": row['dataset'],
+            "generator": row['generator'],
+            "format": row['format']
+        }
+        return img, label, metadata
+def get_dataloaders(
+    manifest_path: str, 
+    batch_size: int = 32
+) -> tuple[DataLoader, DataLoader]:
+    """
+    Builds reproducible train/val dataloaders for the rest of the team.
+    """
+    train_dataset = ManifestDataset(manifest_path, split='train', transform=get_train_transform())
+    val_dataset = ManifestDataset(manifest_path, split='val', transform=get_eval_transform())
+    train_loader = DataLoader(
+        train_dataset, 
+        batch_size=batch_size, 
+        shuffle=True, 
+        num_workers=2, 
+        drop_last=True
+    )
+    val_loader = DataLoader(
+        val_dataset, 
+        batch_size=batch_size, 
+        shuffle=False, 
+        num_workers=2
+    )
+    return train_loader, val_loader
