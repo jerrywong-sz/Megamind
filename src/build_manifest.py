@@ -33,8 +33,11 @@ def build_and_split_manifest(data_dir, dataset_name, generator_name, output_csv)
                 continue
             seen_hashes.add(meta["hash"])
             
+            # Convert /content/images/CIFAKE/train/REAL/img.jpg to train/REAL/img.jpg
+            relative_path = str(img_path.relative_to(Path(data_dir).parent))
+
             records.append({
-                "image_path": str(img_path), "label": label_val, 
+                "image_path": relative_path, "label": label_val, 
                 "dataset": dataset_name, "generator": generator_name,
                 "width": meta["width"], "height": meta["height"], "format": meta["format"]
             })
