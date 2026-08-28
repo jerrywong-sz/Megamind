@@ -217,6 +217,8 @@ def test_main_connects_manifest_dataloaders_to_fit(
         get_dataloaders_mock,
     )
     monkeypatch.setattr("train.fit", fit_mock)
+    data_root = tmp_path / "images"
+
     monkeypatch.setattr(
         sys,
         "argv",
@@ -226,12 +228,15 @@ def test_main_connects_manifest_dataloaders_to_fit(
             str(config_path),
             "--manifest",
             str(manifest_path),
+            "--data-root",
+            str(data_root),
         ],
     )
 
     main()
 
     get_dataloaders_mock.assert_called_once_with(
+        data_root=str(data_root),
         manifest_path=str(manifest_path),
         batch_size=8,
     )

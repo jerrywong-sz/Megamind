@@ -252,6 +252,12 @@ def main():
         help="Path to the CSV manifest containing train and val rows.",
     )
 
+    parser.add_argument(
+        "--data-root",
+        required=True,
+        help="Root directory containing the dataset images.",
+    )
+
     args = parser.parse_args()
 
     config = load_config(
@@ -284,6 +290,7 @@ def main():
     )
 
     train_loader, val_loader = get_dataloaders(
+        data_root=args.data_root,
         manifest_path=args.manifest,
         batch_size=config["batch_size"],
     )
