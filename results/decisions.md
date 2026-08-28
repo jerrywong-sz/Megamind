@@ -1,0 +1,59 @@
+# Experiment Decisions
+
+## Experiment A — Conventional Baseline
+
+EfficientNet-B0 trained using standard image preprocessing and conventional augmentation:
+
+- Resize to 256 × 256
+- Center crop to 224 × 224
+- Random horizontal flip
+- ImageNet normalization
+
+Experiment A does **not** use any robustness-specific degradation such as
+JPEG compression, blur, resize degradation, Gaussian noise, colour jitter,
+or robustness crop.
+
+This represents a competent conventional image-classification baseline rather
+than an intentionally weak baseline.
+
+## Experiment B — Robustness Augmentation
+
+Experiment B uses the same base pipeline, backbone, and training
+hyperparameters as Experiment A, but additionally applies `random_transform()`
+using challenge-relevant degradations:
+
+- JPEG compression
+- Gaussian blur
+- Resize and upscale
+- Gaussian noise
+- Colour jitter
+- Crop
+
+## Experiment C — Consistency Training
+
+Experiment C uses the same robustness augmentation as Experiment B.
+
+For each source image, the model receives both a clean view and a damaged view.
+Training includes the normal classification loss plus a consistency penalty
+that encourages the model to produce similar predictions for both views.
+
+## Fair Ablation
+
+To make A/B/C directly comparable, the following should remain constant:
+
+- EfficientNet-B0 backbone
+- Random seed
+- Number of epochs
+- Batch size
+- Learning rate
+- Weight decay
+- Train/validation split
+- Other shared training settings
+
+The intended comparison is:
+
+A → conventional detector
+
+B → effect of robustness augmentation
+
+C → additional effect of explicit consistency training
