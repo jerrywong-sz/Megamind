@@ -37,7 +37,7 @@ def get_train_transform() -> transforms.Compose:
     """Build the image transform used for Experiment A training."""
     return transforms.Compose([
         transforms.Resize((256, 256)),
-        transforms.RandomCrop(224),
+        transforms.CenterCrop(224),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
