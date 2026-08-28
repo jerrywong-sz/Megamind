@@ -13,3 +13,5 @@ weight_decay: 0.0001
 amp: true
 
 checkpoint_dir: checkpoints
+
+checkpoint_name: baseline.pt

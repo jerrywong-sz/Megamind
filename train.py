@@ -1,10 +1,30 @@
 import argparse
+import random
+from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn as nn
 import yaml
 
 from src.models import build_model
+
+
+
+def set_seed(seed):
+    """Set random seeds for reproducible experiments."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def save_checkpoint(model, checkpoint_path):
+    checkpoint_path = Path(checkpoint_path)
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(model.state_dict(), checkpoint_path)
 
 
 def load_config(path):
@@ -136,6 +156,70 @@ def validate_one_epoch(
     return average_loss, accuracy
 
 
+
+def fit(
+    model,
+    train_loader,
+    val_loader,
+    criterion,
+    optimizer,
+    device,
+    epochs,
+    checkpoint_path,
+):
+    """Train and validate the model across multiple epochs."""
+
+    best_val_loss = float("inf")
+    history = []
+
+    for epoch in range(1, epochs + 1):
+        train_loss, train_accuracy = train_one_epoch(
+            model,
+            train_loader,
+            criterion,
+            optimizer,
+            device,
+        )
+
+        val_loss, val_accuracy = validate_one_epoch(
+            model,
+            val_loader,
+            criterion,
+            device,
+        )
+
+        print(
+            f"Epoch {epoch}/{epochs} | "
+            f"Train Loss: {train_loss:.4f} | "
+            f"Train Acc: {train_accuracy:.2%} | "
+            f"Val Loss: {val_loss:.4f} | "
+            f"Val Acc: {val_accuracy:.2%}"
+        )
+
+        history.append({
+            "epoch": epoch,
+            "train_loss": train_loss,
+            "train_accuracy": train_accuracy,
+            "val_loss": val_loss,
+            "val_accuracy": val_accuracy,
+        })
+
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+
+            save_checkpoint(
+                model,
+                checkpoint_path,
+            )
+
+            print(
+                f"✅ Best checkpoint saved: "
+                f"{checkpoint_path}"
+            )
+
+    return history
+
+
 def main():
     parser = argparse.ArgumentParser()
 
@@ -149,6 +233,8 @@ def main():
     config = load_config(
         args.config
     )
+
+    set_seed(config["seed"])
 
     device = torch.device(
         "cuda"
