@@ -71,8 +71,132 @@ always matches the number of images found.
 
 ## Reproducing results
 
-TODO: fill in once a trained checkpoint exists — the exact `train.py`
-command and hyperparameters used, and the checkpoint's location/hash.
+Follow these steps in order to go from raw images to a submission-ready
+`results/preds.json`.
+
+### 1. Environment
+
+Set up and activate the venv as described in **Setup and installation**
+above, then keep it active for every command below.
+
+### 2. Obtain the datasets
+
+- **CIFAKE** (Kaggle) — <https://www.kaggle.com/datasets/birdy654/cifake-real-and-ai-generated-synthetic-images>
+- **SID_Set** (Hugging Face, **gated**) — <https://huggingface.co/datasets/saberzl/SID_Set>.
+  You must request access on that page before you can download it; approval
+  isn't instant, so request it early.
+- **WildFake subset** (COCO val2017 real images + DALL·E Advanced generated
+  images) — <https://modelscope.cn/datasets/hy2628982280/WildFake/summary>.
+  This is a **held-out demonstration benchmark only**. Do **not** train on
+  it — it exists to show generalization to a source/generator the model
+  never saw during training.
+
+### 3. Expected raw directory layout
+
+`src/build_manifest.py` expects each dataset's raw images split into
+`REAL/` and `FAKE/` subfolders (searched recursively), e.g.:
+
+```
+data/
+  CIFAKE/
+    train/
+      REAL/
+        ...
+      FAKE/
+        ...
+  SID_Set/
+    REAL/
+      ...
+    FAKE/
+      ...
+```
+
+### 4. Build the manifest CSV
+
+**`src/build_manifest.py` currently hardcodes Colab paths in its
+`if __name__ == "__main__"` block instead of accepting CLI arguments** —
+running `python src/build_manifest.py` as-is will try to read
+`/content/images/...` and fail on a local machine. Call the function
+directly with your own paths instead:
+
+```bash
+python -c "from src.build_manifest import build_and_split_manifest; build_and_split_manifest('data/CIFAKE/train', 'CIFAKE', 'SD1.4', 'data/cifake_manifest.csv')"
+```
+
+(identical command on Windows PowerShell and Mac/Linux)
+
+This hashes and de-duplicates images, balances classes 50/50, and writes a
+70/15/15 train/val/test split into the CSV. Run it once per dataset. TODO:
+there's no built-in way yet to merge multiple datasets' manifests into one
+combined CSV for `get_dataloaders()` — do that manually (e.g.
+`pandas.concat`) until that's added.
+
+### 5. Train the three experiments
+
+TODO — `train.py` is still empty (open as PR #2, not yet merged) and
+`configs/` has no committed config yet, so there is no real training
+command to give here. Once it exists, it should be wired to:
+
+- **Experiment A (clean baseline):** base preprocessing only —
+  `get_train_transform()` in [src/data.py](src/data.py) (`Resize(256) →
+  RandomCrop(224) → RandomHorizontalFlip → Normalize`; its docstring
+  already labels it "Experiment A"), no robustness damage applied.
+- **Experiment B (augmented):** same base preprocessing, plus
+  `random_transform()` from
+  [src/augmentations.py](src/augmentations.py), which applies 0–3 of
+  {JPEG, blur, resize, noise, colour, crop} per image with randomized
+  parameters.
+- **Experiment C (consistency):** same as B, plus a consistency penalty
+  between clean and damaged views of the same image. TODO: the loss isn't
+  implemented yet — `src/losses.py` is currently empty.
+
+Backbone (`build_model()`), seed, epochs, batch size, learning rate, and
+weight decay must be held identical across A/B/C so the ablation isolates
+the training method rather than confounding hyperparameters. TODO: fill in
+the actual values and command once `train.py` exists, e.g.:
+
+```
+python train.py --config configs/experiment_a.yaml   # TODO: not real yet
+```
+
+### 6. Evaluate against the challenge transform grid
+
+TODO — `evaluate.py` is still empty, so there is no runnable evaluation
+command yet. The building blocks it should use already exist and work
+today:
+
+- `exact_transform(img, name, param)` in
+  [src/augmentations.py](src/augmentations.py) — applies one deterministic,
+  named transform. Names match the six challenge dimensions: `jpeg`,
+  `blur`, `resize`, `noise`, `colour`, `crop`.
+- `compute_binary_metrics(labels, probabilities, threshold=0.5)` in
+  [src/metrics.py](src/metrics.py) — returns accuracy, balanced accuracy,
+  precision/recall/F1, AUROC, AUPRC, FPR/FNR, and Brier score.
+
+Once `evaluate.py` exists, run it at each of these exact values:
+
+| Transform | Values |
+|---|---|
+| JPEG quality | 90, 70, 50, 30 |
+| Blur (sigma) | 0.5, 1.0, 2.0 |
+| Resize (scale) | 0.5x, 0.25x |
+| Noise (sigma) | 0.02, 0.05, 0.10 |
+| Colour jitter | ±20% |
+| Crop (fraction) | 80% |
+
+### 7. Run predict.py for the final submission
+
+This step is real today — verified against the actual CLI:
+
+```bash
+python predict.py --input_dir <path_to_test_images> --checkpoint <path_to_checkpoint.pt> --output results/preds.json --batch_size 32
+```
+
+(identical command on Windows PowerShell and Mac/Linux; just make sure the
+venv from step 1 is active)
+
+TODO: fill in the real `--checkpoint` path once an experiment (A/B/C — TBD)
+produces the checkpoint we're submitting.
 
 ## Results tables
 
