@@ -126,3 +126,52 @@ def test_fit_saves_best_checkpoint(tmp_path):
     )
 
     loaded_model.load_state_dict(state_dict)
+
+
+def test_training_loop_accepts_metadata():
+    device = torch.device("cpu")
+
+    images = torch.randn(4, 3, 8, 8)
+    labels = torch.tensor([0, 1, 0, 1])
+
+    metadata = [
+        {"image_path": f"image_{i}.jpg"}
+        for i in range(4)
+    ]
+
+    class MetadataDataset(torch.utils.data.Dataset):
+        def __len__(self):
+            return len(images)
+
+        def __getitem__(self, index):
+            return (
+                images[index],
+                labels[index],
+                metadata[index],
+            )
+
+    loader = DataLoader(
+        MetadataDataset(),
+        batch_size=2,
+        shuffle=False,
+    )
+
+    model = make_tiny_model().to(device)
+
+    criterion = nn.BCEWithLogitsLoss()
+
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=1e-4,
+    )
+
+    loss, accuracy = train_one_epoch(
+        model,
+        loader,
+        criterion,
+        optimizer,
+        device,
+    )
+
+    assert loss >= 0
+    assert 0 <= accuracy <= 1

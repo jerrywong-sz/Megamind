@@ -45,7 +45,7 @@ def train_one_epoch(
     total_correct = 0
     total_samples = 0
 
-    for images, labels in train_loader:
+    for images, labels, *_ in train_loader:
         images = images.to(device)
 
         labels = (
@@ -110,7 +110,7 @@ def validate_one_epoch(
     total_samples = 0
 
     with torch.no_grad():
-        for images, labels in val_loader:
+        for images, labels, *_ in val_loader:
             images = images.to(device)
 
             labels = (
