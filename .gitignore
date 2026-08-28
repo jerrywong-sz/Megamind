@@ -220,3 +220,6 @@ venv/
 data/
 *.pt
 checkpoints/
+
+# Ignore downloaded hackathon data
+images/
