@@ -1,4 +1,7 @@
 import random
+import sys
+from pathlib import Path
+from unittest.mock import Mock
 
 import numpy as np
 import torch
@@ -7,6 +10,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from train import (
     fit,
+    main,
     set_seed,
     train_one_epoch,
     validate_one_epoch,
@@ -175,3 +179,69 @@ def test_training_loop_accepts_metadata():
 
     assert loss >= 0
     assert 0 <= accuracy <= 1
+
+
+def test_main_connects_manifest_dataloaders_to_fit(
+    tmp_path,
+    monkeypatch,
+):
+    config_path = tmp_path / "baseline.yaml"
+    config_path.write_text(
+        "\n".join([
+            "experiment: clean",
+            "seed: 42",
+            "pretrained: false",
+            "batch_size: 8",
+            "epochs: 3",
+            "learning_rate: 0.0001",
+            "weight_decay: 0.0001",
+            "checkpoint_dir: checkpoints",
+            "checkpoint_name: baseline.pt",
+        ])
+    )
+
+    manifest_path = tmp_path / "manifest.csv"
+    train_loader = object()
+    val_loader = object()
+    model = make_tiny_model()
+
+    build_model_mock = Mock(return_value=model)
+    get_dataloaders_mock = Mock(
+        return_value=(train_loader, val_loader)
+    )
+    fit_mock = Mock()
+
+    monkeypatch.setattr("train.build_model", build_model_mock)
+    monkeypatch.setattr(
+        "train.get_dataloaders",
+        get_dataloaders_mock,
+    )
+    monkeypatch.setattr("train.fit", fit_mock)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "train.py",
+            "--config",
+            str(config_path),
+            "--manifest",
+            str(manifest_path),
+        ],
+    )
+
+    main()
+
+    get_dataloaders_mock.assert_called_once_with(
+        manifest_path=str(manifest_path),
+        batch_size=8,
+    )
+
+    fit_call = fit_mock.call_args.kwargs
+
+    assert fit_call["model"] is model
+    assert fit_call["train_loader"] is train_loader
+    assert fit_call["val_loader"] is val_loader
+    assert fit_call["epochs"] == 3
+    assert fit_call["checkpoint_path"] == Path(
+        "checkpoints/baseline.pt"
+    )

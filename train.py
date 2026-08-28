@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import yaml
 
+from src.data import get_dataloaders
 from src.models import build_model
 
 
@@ -228,6 +229,12 @@ def main():
         required=True,
     )
 
+    parser.add_argument(
+        "--manifest",
+        required=True,
+        help="Path to the CSV manifest containing train and val rows.",
+    )
+
     args = parser.parse_args()
 
     config = load_config(
@@ -254,17 +261,34 @@ def main():
         weight_decay=config["weight_decay"],
     )
 
+    train_loader, val_loader = get_dataloaders(
+        manifest_path=args.manifest,
+        batch_size=config["batch_size"],
+    )
+
+    checkpoint_path = (
+        Path(config["checkpoint_dir"])
+        / config["checkpoint_name"]
+    )
+
     print("Experiment:", config["experiment"])
     print("Device:", device)
     print("Model:", model.__class__.__name__)
     print("Loss:", criterion.__class__.__name__)
     print("Optimizer:", optimizer.__class__.__name__)
 
-    print(
-        "✅ Training components ready!"
-    )
+    print("Manifest:", args.manifest)
 
-    # Dataset loaders will be connected next.
+    fit(
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        criterion=criterion,
+        optimizer=optimizer,
+        device=device,
+        epochs=config["epochs"],
+        checkpoint_path=checkpoint_path,
+    )
 
 
 if __name__ == "__main__":
