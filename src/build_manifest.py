@@ -57,11 +57,9 @@ def build_and_split_manifest(data_dir, dataset_name, generator_name, output_csv)
     print(f"Success! Manifest saved to {output_csv} with {len(final_manifest)} images.")
 
 if __name__ == "__main__":
-    # We will point this at the Colab Drive path when we run it remotely tomorrow,
-    # but for now, we leave the plumbing ready.
     build_and_split_manifest(
-        data_dir="/content/drive/MyDrive/AIGC_Hackathon/images/CIFAKE/train", 
+        data_dir="/content/images/CIFAKE/train", 
         dataset_name="CIFAKE", 
         generator_name="SD1.4", 
-        output_csv="/content/drive/MyDrive/AIGC_Hackathon/images/cifake_manifest.csv"
+        output_csv="/content/images/cifake_manifest.csv"
     )
