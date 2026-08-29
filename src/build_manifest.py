@@ -79,16 +79,19 @@ def build_and_split_manifest(data_dir, output_dir, dataset_name, generator_name,
         df_binary[df_binary['label'] == 1.0].sample(n=min_count, random_state=42)
     ]).sample(frac=1, random_state=42).reset_index(drop=True)
 
-    # Split 70/15/15 for Binary
-    train, val, test = np.split(df_balanced, [int(.7*len(df_balanced)), int(.85*len(df_balanced))])
-    train['split'], val['split'], test['split'] = 'train', 'val', 'test'
-    
-    # Merge back the Tampered (Bonus) data
     df_tampered = df[df['label'] == 2.0].copy()
     if not df_tampered.empty:
         df_tampered['split'] = df_tampered['split_override']
-    
-    final_manifest = pd.concat([train, val, test, df_tampered]).drop(columns=['split_override'])
+
+    if args.force_split:
+        df_balanced['split'] = args.force_split
+        final_manifest = pd.concat([df_balanced, df_tampered]).drop(columns=['split_override'])
+    else:
+        # Split 70/15/15 for Binary
+        train, val, test = np.split(df_balanced, [int(.7*len(df_balanced)), int(.85*len(df_balanced))])
+        train['split'], val['split'], test['split'] = 'train', 'val', 'test'
+        final_manifest = pd.concat([train, val, test, df_tampered]).drop(columns=['split_override'])
+
     final_manifest.to_csv(output_csv, index=False)
     print(f"Success! Manifest saved to {output_csv} with {len(final_manifest)} standardized images.")
 
@@ -99,6 +102,7 @@ if __name__ == "__main__":
     parser.add_argument("--dataset_name", required=True)
     parser.add_argument("--generator", required=True)
     parser.add_argument("--output_csv", required=True)
+    parser.add_argument("--force_split", default=None, choices=['train', 'val', 'test'], help="Force all binary images into one split")
     args = parser.parse_args()
     
     build_and_split_manifest(
