@@ -55,14 +55,14 @@ def build_and_split_manifest(data_dir, output_dir, dataset_name, generator_name,
                 continue
             seen_hashes.add(meta["hash"])
             
-            # Convert /content/images/CIFAKE/train/REAL/img.jpg to train/REAL/img.jpg
-            relative_path = str(img_path.relative_to(Path(data_dir).parent))
+            # Extract the path relative to the output_dir so it matches perfectly
+            correct_relative_path = Path(meta["new_path"]).relative_to(Path(output_dir)).as_posix()
 
             # Assign a split override for TAMPERED images, otherwise None
             split_override = "test" if label_val == 2.0 else None
             
             records.append({
-                "image_path": relative_path, "label": label_val, 
+                "image_path": correct_relative_path, "label": label_val,
                 "dataset": dataset_name, "generator": generator_name,
                 "width": meta["width"], "height": meta["height"], 
                 "format": meta["format"], "split_override": split_override
