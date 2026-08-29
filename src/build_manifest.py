@@ -58,6 +58,9 @@ def build_and_split_manifest(data_dir, output_dir, dataset_name, generator_name,
             # Convert /content/images/CIFAKE/train/REAL/img.jpg to train/REAL/img.jpg
             relative_path = str(img_path.relative_to(Path(data_dir).parent))
 
+            # Assign a split override for TAMPERED images, otherwise None
+            split_override = "test" if label_val == 2.0 else None
+            
             records.append({
                 "image_path": relative_path, "label": label_val, 
                 "dataset": dataset_name, "generator": generator_name,
