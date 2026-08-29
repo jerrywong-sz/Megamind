@@ -103,6 +103,14 @@ def exact_transform(img, name, param):
     return transforms[name](img, param)
 
 
+def exact_transform_chain(img, steps):
+    """Apply a fixed sequence of named transforms for robustness evaluation."""
+    transformed = img.convert("RGB")
+    for name, param in steps:
+        transformed = exact_transform(transformed, name, param)
+    return transformed.convert("RGB")
+
+
 def _choose_transform_count():
     roll = random.random()
     if roll < 0.30:

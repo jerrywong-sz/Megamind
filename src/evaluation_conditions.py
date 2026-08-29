@@ -5,11 +5,15 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Union
 
 import torch
 from PIL import Image
 
-from src.augmentations import exact_transform
+from src.augmentations import exact_transform, exact_transform_chain
+
+
+TransformStep = tuple[str, Union[int, float]]
 
 
 @dataclass(frozen=True)
@@ -18,6 +22,10 @@ class EvaluationCondition:
 
     name: str
     severity: int | float | None
+    steps: tuple[TransformStep, ...] = ()
+    seen_in_training: bool = True
+    condition_type: str = "single"
+    severity_label: str | None = None
 
 
 CLEAN_CONDITION = EvaluationCondition("clean", None)
@@ -40,7 +48,49 @@ ROBUSTNESS_CONDITIONS = (
     EvaluationCondition("crop", 0.80),
 )
 
-ALL_EVALUATION_CONDITIONS = (CLEAN_CONDITION, *ROBUSTNESS_CONDITIONS)
+MIXED_ROBUSTNESS_CONDITIONS = (
+    EvaluationCondition(
+        "resize_0.5_jpeg_70",
+        None,
+        steps=(("resize", 0.5), ("jpeg", 70)),
+        seen_in_training=True,
+        condition_type="chain",
+    ),
+    EvaluationCondition(
+        "resize_0.25_jpeg_50",
+        None,
+        steps=(("resize", 0.25), ("jpeg", 50)),
+        seen_in_training=False,
+        condition_type="chain",
+    ),
+    EvaluationCondition(
+        "crop_0.8_colour_plus20_jpeg_50",
+        None,
+        steps=(("crop", 0.80), ("colour", 0.20), ("jpeg", 50)),
+        seen_in_training=False,
+        condition_type="chain",
+    ),
+    EvaluationCondition(
+        "screenshot_resample_jpeg_70",
+        None,
+        steps=(("resize", 0.5), ("blur", 0.5), ("jpeg", 70)),
+        seen_in_training=False,
+        condition_type="chain",
+    ),
+    EvaluationCondition(
+        "repeated_jpeg_90_70_50",
+        None,
+        steps=(("jpeg", 90), ("jpeg", 70), ("jpeg", 50)),
+        seen_in_training=False,
+        condition_type="chain",
+    ),
+)
+
+ALL_EVALUATION_CONDITIONS = (
+    CLEAN_CONDITION,
+    *ROBUSTNESS_CONDITIONS,
+    *MIXED_ROBUSTNESS_CONDITIONS,
+)
 
 
 def _image_seed(
@@ -49,11 +99,23 @@ def _image_seed(
     image_path: str,
 ) -> int:
     """Derive the same stable seed for an image in every process and run."""
-    identity = (
-        f"{base_seed}|{condition.name}|{condition.severity}|{image_path}"
-    ).encode("utf-8")
+    if condition.steps:
+        identity = (
+            f"{base_seed}|{condition.name}|{condition.severity}|"
+            f"{condition.steps}|{image_path}"
+        ).encode("utf-8")
+    else:
+        identity = (
+            f"{base_seed}|{condition.name}|{condition.severity}|{image_path}"
+        ).encode("utf-8")
     digest = hashlib.sha256(identity).digest()
     return int.from_bytes(digest[:8], "big") % (2**31)
+
+
+def _condition_uses_noise(condition: EvaluationCondition) -> bool:
+    if condition.steps:
+        return any(name == "noise" for name, _ in condition.steps)
+    return condition.name == "noise"
 
 
 @dataclass(frozen=True)
@@ -64,7 +126,15 @@ class ConditionTransform:
     base_seed: int
 
     def __call__(self, image: Image.Image, image_path: str) -> Image.Image:
-        if self.condition.name == "noise":
+        if self.condition.steps:
+            if _condition_uses_noise(self.condition):
+                seed = _image_seed(self.base_seed, self.condition, image_path)
+                with torch.random.fork_rng(devices=[]):
+                    torch.manual_seed(seed)
+                    return exact_transform_chain(image, self.condition.steps)
+            return exact_transform_chain(image, self.condition.steps)
+
+        if _condition_uses_noise(self.condition):
             seed = _image_seed(self.base_seed, self.condition, image_path)
             with torch.random.fork_rng(devices=[]):
                 torch.manual_seed(seed)
@@ -95,6 +165,8 @@ def build_condition_transform(
     if condition.name == "clean":
         if condition.severity is not None:
             raise ValueError("the clean condition must not have a severity")
+        if condition.steps:
+            raise ValueError("the clean condition must not have transform steps")
         return None
 
     return ConditionTransform(condition=condition, base_seed=base_seed)

@@ -184,11 +184,14 @@ The robustness runner uses:
   Names match the six challenge dimensions: `jpeg`, `blur`, `resize`, `noise`,
   `colour`, `crop`. Gaussian noise is seeded per image so A and B receive the
   same noisy pixels and later runs are reproducible.
+- `exact_transform_chain(img, steps)` in
+  [src/augmentations.py](src/augmentations.py) to apply realistic deployment
+  chains such as resize followed by JPEG compression or repeated JPEG saves.
 - `compute_binary_metrics(labels, probabilities, threshold=0.5)` in
   [src/metrics.py](src/metrics.py) — returns accuracy, balanced accuracy,
   precision/recall/F1, AUROC, AUPRC, FPR/FNR, and Brier score.
 
-It evaluates these 15 transformed conditions, plus clean:
+It evaluates these 15 individual transformed conditions, plus clean:
 
 | Transform | Values |
 |---|---|
@@ -199,12 +202,35 @@ It evaluates these 15 transformed conditions, plus clean:
 | Colour jitter | ±20% |
 | Crop (fraction) | 80% |
 
+It also evaluates mixed robustness chains that better match deployment and
+sharing pipelines:
+
+| Chain | Seen in robustness training? |
+|---|---|
+| Resize 0.5x -> JPEG q70 | Yes |
+| Resize 0.25x -> JPEG q50 | No |
+| Crop 80% -> Colour +20% -> JPEG q50 | No |
+| Resize 0.5x -> Blur 0.5 -> JPEG q70 | No |
+| JPEG q90 -> JPEG q70 -> JPEG q50 | No |
+
+For extra stress testing, append deterministic random corruption chains:
+
+```bash
+python evaluate.py --mode robustness --data-root <dataset_root> --manifest <manifest.csv> --checkpoint-a <experiment_a.pt> --checkpoint-b <experiment_b.pt> --output-dir results/robustness_stress --split val --device auto --seed 42 --stress-seed 42 --stress-count-mild 20 --stress-count-medium 20 --stress-count-strong 20
+```
+
+These sampled conditions are evaluation-only. They draw 1-4 realistic
+transforms from severity-specific ranges, normally avoid duplicate transforms,
+allow repeated JPEG only for recompression, and keep JPEG near the end of
+mixed chains. The exact generated steps and parameters are recorded in
+`robustness_config.json`.
+
 The robustness run writes:
 
 - `robustness_predictions.csv` — one row per image, model, and condition.
 - `robustness_metrics.csv` — full metrics for each model and condition.
-- `robustness_comparison.csv` — A/B accuracy, drop from clean, and the better
-  model for every condition.
+- `robustness_comparison.csv` — A/B accuracy, AUROC, drops from clean,
+  seen/unseen labels, and the better model for every condition.
 - `robustness_config.json` — split, seed, preprocessing, condition grid, and
   checkpoint hashes used for the run.
 

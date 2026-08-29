@@ -219,10 +219,34 @@ def test_robustness_comparison_calculates_drops_and_b_advantage():
         EvaluationCondition("jpeg", 30),
     )
     metrics = pd.DataFrame([
-        {"model_id": "a", "transform": "clean", "severity": None, "accuracy": 0.9},
-        {"model_id": "b", "transform": "clean", "severity": None, "accuracy": 0.8},
-        {"model_id": "a", "transform": "jpeg", "severity": 30, "accuracy": 0.5},
-        {"model_id": "b", "transform": "jpeg", "severity": 30, "accuracy": 0.7},
+        {
+            "model_id": "a",
+            "transform": "clean",
+            "severity": None,
+            "accuracy": 0.9,
+            "auroc": 0.95,
+        },
+        {
+            "model_id": "b",
+            "transform": "clean",
+            "severity": None,
+            "accuracy": 0.8,
+            "auroc": 0.90,
+        },
+        {
+            "model_id": "a",
+            "transform": "jpeg",
+            "severity": 30,
+            "accuracy": 0.5,
+            "auroc": 0.70,
+        },
+        {
+            "model_id": "b",
+            "transform": "jpeg",
+            "severity": 30,
+            "accuracy": 0.7,
+            "auroc": 0.80,
+        },
     ])
 
     comparison = build_robustness_comparison(
@@ -235,6 +259,13 @@ def test_robustness_comparison_calculates_drops_and_b_advantage():
     assert comparison.loc["jpeg", "b_minus_a_accuracy"] == pytest.approx(0.2)
     assert comparison.loc["jpeg", "model_a_drop_from_clean"] == pytest.approx(0.4)
     assert comparison.loc["jpeg", "model_b_drop_from_clean"] == pytest.approx(0.1)
+    assert comparison.loc["jpeg", "b_minus_a_auroc"] == pytest.approx(0.1)
+    assert comparison.loc["jpeg", "model_a_auroc_drop_from_clean"] == pytest.approx(
+        0.25
+    )
+    assert comparison.loc["jpeg", "model_b_auroc_drop_from_clean"] == pytest.approx(
+        0.1
+    )
     assert comparison.loc["jpeg", "better_model"] == "b"
 
 
@@ -290,3 +321,5 @@ def test_robustness_runner_writes_each_condition_for_both_models(
         config = json.load(file)
     assert config["num_conditions"] == 3
     assert config["seed"] == 42
+    assert config["conditions"][1]["condition_type"] == "single"
+    assert config["conditions"][1]["steps"] == []

@@ -28,6 +28,7 @@ from src.evaluation_conditions import (
 )
 from src.metrics import compute_binary_metrics
 from src.models import build_model
+from src.random_conditions import generate_stress_conditions
 
 
 PREDICTION_COLUMNS = [
@@ -390,6 +391,7 @@ def build_robustness_comparison(
     """Compare A and B per condition and calculate drops from clean."""
     clean_rows = metrics_table[metrics_table["transform"] == "clean"]
     clean_accuracy = clean_rows.set_index("model_id")["accuracy"].to_dict()
+    clean_auroc = clean_rows.set_index("model_id")["auroc"].to_dict()
     if model_a_id not in clean_accuracy or model_b_id not in clean_accuracy:
         raise ValueError("robustness metrics must include clean rows for both models")
 
@@ -406,6 +408,7 @@ def build_robustness_comparison(
             ]
 
         accuracies = condition_rows.set_index("model_id")["accuracy"].to_dict()
+        aurocs = condition_rows.set_index("model_id")["auroc"].to_dict()
         if model_a_id not in accuracies or model_b_id not in accuracies:
             raise ValueError(
                 "robustness metrics must include both models for every condition"
@@ -413,6 +416,8 @@ def build_robustness_comparison(
 
         model_a_accuracy = float(accuracies[model_a_id])
         model_b_accuracy = float(accuracies[model_b_id])
+        model_a_auroc = float(aurocs[model_a_id])
+        model_b_auroc = float(aurocs[model_b_id])
         difference = model_b_accuracy - model_a_accuracy
         if abs(difference) < 1e-12:
             better_model = "tie"
@@ -424,16 +429,28 @@ def build_robustness_comparison(
         comparison_rows.append({
             "transform": condition.name,
             "severity": condition.severity,
+            "severity_label": condition.severity_label,
+            "condition_type": condition.condition_type,
+            "seen_in_training": condition.seen_in_training,
             "model_a_id": model_a_id,
             "model_b_id": model_b_id,
             "model_a_accuracy": model_a_accuracy,
             "model_b_accuracy": model_b_accuracy,
             "b_minus_a_accuracy": difference,
+            "model_a_auroc": model_a_auroc,
+            "model_b_auroc": model_b_auroc,
+            "b_minus_a_auroc": model_b_auroc - model_a_auroc,
             "model_a_drop_from_clean": (
                 float(clean_accuracy[model_a_id]) - model_a_accuracy
             ),
             "model_b_drop_from_clean": (
                 float(clean_accuracy[model_b_id]) - model_b_accuracy
+            ),
+            "model_a_auroc_drop_from_clean": (
+                float(clean_auroc[model_a_id]) - model_a_auroc
+            ),
+            "model_b_auroc_drop_from_clean": (
+                float(clean_auroc[model_b_id]) - model_b_auroc
             ),
             "better_model": better_model,
         })
@@ -502,7 +519,10 @@ def run_robustness_comparison(
             pre_transform=pre_transform,
         )
         reference_rows: pd.DataFrame | None = None
-        condition_seed = seed if condition.name == "noise" else None
+        uses_noise = condition.name == "noise" or any(
+            name == "noise" for name, _ in condition.steps
+        )
+        condition_seed = seed if uses_noise else None
 
         for model_id, model, checkpoint_hash, _ in loaded_models:
             print(
@@ -538,6 +558,9 @@ def run_robustness_comparison(
                 "split": split,
                 "transform": condition.name,
                 "severity": condition.severity,
+                "severity_label": condition.severity_label,
+                "condition_type": condition.condition_type,
+                "seen_in_training": condition.seen_in_training,
                 "seed": condition_seed,
                 **metrics,
             })
@@ -585,7 +608,17 @@ def run_robustness_comparison(
         "num_conditions": len(conditions),
         "num_images_per_model_condition": int(metric_rows[0]["num_samples"]),
         "conditions": [
-            {"transform": item.name, "severity": item.severity}
+            {
+                "transform": item.name,
+                "severity": item.severity,
+                "severity_label": item.severity_label,
+                "condition_type": item.condition_type,
+                "seen_in_training": item.seen_in_training,
+                "steps": [
+                    {"transform": step_name, "severity": step_severity}
+                    for step_name, step_severity in item.steps
+                ],
+            }
             for item in conditions
         ],
         "checkpoints": checkpoint_records,
@@ -623,6 +656,30 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
+        "--stress-count-mild",
+        type=int,
+        default=0,
+        help="Number of optional mild random stress conditions to append.",
+    )
+    parser.add_argument(
+        "--stress-count-medium",
+        type=int,
+        default=0,
+        help="Number of optional medium random stress conditions to append.",
+    )
+    parser.add_argument(
+        "--stress-count-strong",
+        type=int,
+        default=0,
+        help="Number of optional strong random stress conditions to append.",
+    )
+    parser.add_argument(
+        "--stress-seed",
+        type=int,
+        default=42,
+        help="Seed used for optional random stress condition generation.",
+    )
+    parser.add_argument(
         "--device",
         choices=["auto", "cpu", "cuda"],
         default="auto",
@@ -655,17 +712,42 @@ def main(argv: Sequence[str] | None = None) -> None:
             ["model_id", "num_samples", "accuracy", "f1", "auroc"]
         ]
     else:
+        stress_counts = {
+            "mild": args.stress_count_mild,
+            "medium": args.stress_count_medium,
+            "strong": args.stress_count_strong,
+        }
+        if any(count < 0 for count in stress_counts.values()):
+            raise ValueError("stress condition counts must be non-negative")
+
+        conditions = ALL_EVALUATION_CONDITIONS
+        if any(stress_counts.values()):
+            conditions = (
+                *ALL_EVALUATION_CONDITIONS,
+                *generate_stress_conditions(
+                    counts=stress_counts,
+                    seed=args.stress_seed,
+                ),
+            )
+
         _, metrics_table, comparison_table = run_robustness_comparison(
             **common_arguments,
             seed=args.seed,
+            conditions=conditions,
         )
         display_table = comparison_table[
             [
                 "transform",
                 "severity",
+                "severity_label",
+                "condition_type",
+                "seen_in_training",
                 "model_a_accuracy",
                 "model_b_accuracy",
                 "b_minus_a_accuracy",
+                "model_a_auroc",
+                "model_b_auroc",
+                "b_minus_a_auroc",
             ]
         ]
 
