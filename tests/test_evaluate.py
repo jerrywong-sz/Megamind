@@ -1,10 +1,22 @@
 """Tests for the clean-image evaluation flow."""
 
+import json
+from pathlib import Path
+
+import pandas as pd
 import pytest
 import torch
 import torch.nn as nn
+from PIL import Image
 
-from evaluate import PREDICTION_COLUMNS, evaluate_clean_model
+import evaluate
+from evaluate import (
+    METRICS_FILENAMES,
+    PREDICTION_COLUMNS,
+    evaluate_clean_model,
+    load_model_checkpoint,
+    run_clean_comparison,
+)
 
 
 class FixedLogitModel(nn.Module):
@@ -55,6 +67,7 @@ def test_clean_evaluation_converts_logits_and_calculates_metrics():
     ]
     assert predictions["transform"].tolist() == ["clean"] * 4
     assert predictions["predicted_label"].tolist() == [0, 1, 1, 0]
+    assert predictions["is_correct"].tolist() == [True] * 4
     assert predictions["prob_ai"].tolist() == pytest.approx([
         0.119203,
         0.802184,
@@ -89,3 +102,108 @@ def test_clean_evaluation_rejects_non_binary_labels():
             torch.device("cpu"),
             model_id="dummy-model",
         )
+
+
+class TinyCheckpointModel(nn.Module):
+    """Small substitute used to test checkpoint loading quickly."""
+
+    def __init__(self):
+        super().__init__()
+        self.classifier = nn.Linear(2, 1)
+
+    def forward(self, values):
+        return self.classifier(values)
+
+
+def test_checkpoint_loader_restores_weights_and_records_hash(tmp_path, monkeypatch):
+    original_model = TinyCheckpointModel()
+    with torch.no_grad():
+        original_model.classifier.weight.fill_(0.25)
+        original_model.classifier.bias.fill_(-0.5)
+
+    checkpoint_path = tmp_path / "model.pt"
+    torch.save(original_model.state_dict(), checkpoint_path)
+    monkeypatch.setattr(evaluate, "build_model", lambda pretrained: TinyCheckpointModel())
+
+    loaded_model, checkpoint_hash = load_model_checkpoint(
+        checkpoint_path,
+        torch.device("cpu"),
+    )
+
+    inputs = torch.tensor([[2.0, 4.0]])
+    assert loaded_model(inputs).item() == pytest.approx(1.0)
+    assert len(checkpoint_hash) == 64
+
+
+def test_checkpoint_loader_rejects_incompatible_weights(tmp_path, monkeypatch):
+    checkpoint_path = tmp_path / "wrong.pt"
+    torch.save({"unexpected.weight": torch.ones(1)}, checkpoint_path)
+    monkeypatch.setattr(evaluate, "build_model", lambda pretrained: TinyCheckpointModel())
+
+    with pytest.raises(ValueError, match="does not match"):
+        load_model_checkpoint(checkpoint_path, torch.device("cpu"))
+
+
+def _write_evaluation_fixture(tmp_path: Path) -> tuple[Path, Path]:
+    data_root = tmp_path / "images"
+    rows = []
+    labels = [0.0, 1.0, 1.0, 0.0]
+    for index, label in enumerate(labels):
+        class_name = "FAKE" if label == 1 else "REAL"
+        relative_path = f"train/{class_name}/image-{index}.png"
+        image_path = data_root / relative_path
+        image_path.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (32, 32), (index * 50,) * 3).save(image_path)
+        rows.append({
+            "image_path": relative_path,
+            "label": label,
+            "dataset": "dummy",
+            "generator": "dummy-ai" if label == 1 else "none",
+            "width": 32,
+            "height": 32,
+            "format": "PNG",
+            "split": "val",
+        })
+
+    manifest_path = tmp_path / "manifest.csv"
+    pd.DataFrame(rows).to_csv(manifest_path, index=False)
+    return data_root, manifest_path
+
+
+def test_clean_comparison_uses_same_rows_and_writes_outputs(tmp_path, monkeypatch):
+    data_root, manifest_path = _write_evaluation_fixture(tmp_path)
+    output_dir = tmp_path / "results"
+
+    def fake_checkpoint_loader(checkpoint_path, device):
+        if Path(checkpoint_path).name == "a.pt":
+            return FixedLogitModel([-2.0, 2.0, 2.0, -2.0]), "a" * 64
+        return FixedLogitModel([-2.0, -2.0, 2.0, 2.0]), "b" * 64
+
+    monkeypatch.setattr(evaluate, "load_model_checkpoint", fake_checkpoint_loader)
+
+    predictions, metrics = run_clean_comparison(
+        data_root=data_root,
+        manifest_path=manifest_path,
+        checkpoint_a=tmp_path / "a.pt",
+        checkpoint_b=tmp_path / "b.pt",
+        output_dir=output_dir,
+        batch_size=4,
+        num_workers=0,
+        device=torch.device("cpu"),
+    )
+
+    assert len(predictions) == 8
+    paths_by_model = predictions.groupby("model_id")["image_path"].apply(list)
+    assert paths_by_model["experiment_a"] == paths_by_model["experiment_b"]
+    assert metrics.set_index("model_id").loc["experiment_a", "accuracy"] == 1.0
+    assert metrics.set_index("model_id").loc["experiment_b", "accuracy"] == 0.5
+
+    for filename in METRICS_FILENAMES.values():
+        assert (output_dir / filename).is_file()
+
+    saved_predictions = pd.read_csv(output_dir / "clean_predictions.csv")
+    assert len(saved_predictions) == 8
+    with (output_dir / "evaluation_config.json").open(encoding="utf-8") as file:
+        config = json.load(file)
+    assert config["split"] == "val"
+    assert config["num_images_per_model"] == 4
