@@ -103,6 +103,20 @@ def exact_transform(img, name, param):
     return transforms[name](img, param)
 
 
+def exact_transform_chain(img, steps):
+    """Apply an ordered sequence of exact evaluation transforms.
+
+    Each step is a ``(transform_name, parameter)`` pair accepted by
+    :func:`exact_transform`.  The image remains RGB and is passed directly
+    from one step to the next, which models repeated real-world processing
+    such as resize followed by JPEG re-encoding.
+    """
+    transformed = img.convert("RGB")
+    for name, parameter in steps:
+        transformed = exact_transform(transformed, name, parameter)
+    return transformed.convert("RGB")
+
+
 def _choose_transform_count():
     roll = random.random()
     if roll < 0.30:
