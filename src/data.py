@@ -1,6 +1,7 @@
 """Shared data-loading and preprocessing utilities."""
 
 import os
+from collections.abc import Callable
 
 import pandas as pd
 import torch
@@ -66,6 +67,7 @@ class ManifestDataset(Dataset):
         manifest_path: str,
         split: str,
         transform=None,
+        pre_transform: Callable[[Image.Image, str], Image.Image] | None = None,
     ):
         self.data_root = data_root
         self.df = pd.read_csv(manifest_path)
@@ -74,6 +76,7 @@ class ManifestDataset(Dataset):
             .reset_index(drop=True)
         )
         self.transform = transform
+        self.pre_transform = pre_transform
 
     def __len__(self):
         return len(self.df)
@@ -87,6 +90,9 @@ class ManifestDataset(Dataset):
         )
 
         img = Image.open(full_path).convert("RGB")
+
+        if self.pre_transform:
+            img = self.pre_transform(img, row["image_path"])
 
         if self.transform:
             img = self.transform(img)
@@ -162,6 +168,7 @@ def get_evaluation_dataloader(
     split: str = "val",
     batch_size: int = 32,
     num_workers: int = 2,
+    pre_transform: Callable[[Image.Image, str], Image.Image] | None = None,
 ) -> DataLoader:
     """Build a deterministic DataLoader for one evaluation split.
 
@@ -182,6 +189,7 @@ def get_evaluation_dataloader(
         manifest_path=manifest_path,
         split=split,
         transform=get_eval_transform(),
+        pre_transform=pre_transform,
     )
 
     if len(dataset) == 0:

@@ -13,10 +13,14 @@ import evaluate
 from evaluate import (
     METRICS_FILENAMES,
     PREDICTION_COLUMNS,
+    ROBUSTNESS_FILENAMES,
+    build_robustness_comparison,
     evaluate_clean_model,
     load_model_checkpoint,
     run_clean_comparison,
+    run_robustness_comparison,
 )
+from src.evaluation_conditions import CLEAN_CONDITION, EvaluationCondition
 
 
 class FixedLogitModel(nn.Module):
@@ -207,3 +211,82 @@ def test_clean_comparison_uses_same_rows_and_writes_outputs(tmp_path, monkeypatc
         config = json.load(file)
     assert config["split"] == "val"
     assert config["num_images_per_model"] == 4
+
+
+def test_robustness_comparison_calculates_drops_and_b_advantage():
+    conditions = (
+        CLEAN_CONDITION,
+        EvaluationCondition("jpeg", 30),
+    )
+    metrics = pd.DataFrame([
+        {"model_id": "a", "transform": "clean", "severity": None, "accuracy": 0.9},
+        {"model_id": "b", "transform": "clean", "severity": None, "accuracy": 0.8},
+        {"model_id": "a", "transform": "jpeg", "severity": 30, "accuracy": 0.5},
+        {"model_id": "b", "transform": "jpeg", "severity": 30, "accuracy": 0.7},
+    ])
+
+    comparison = build_robustness_comparison(
+        metrics,
+        conditions=conditions,
+        model_a_id="a",
+        model_b_id="b",
+    ).set_index("transform")
+
+    assert comparison.loc["jpeg", "b_minus_a_accuracy"] == pytest.approx(0.2)
+    assert comparison.loc["jpeg", "model_a_drop_from_clean"] == pytest.approx(0.4)
+    assert comparison.loc["jpeg", "model_b_drop_from_clean"] == pytest.approx(0.1)
+    assert comparison.loc["jpeg", "better_model"] == "b"
+
+
+def test_robustness_runner_writes_each_condition_for_both_models(
+    tmp_path,
+    monkeypatch,
+):
+    data_root, manifest_path = _write_evaluation_fixture(tmp_path)
+    output_dir = tmp_path / "robustness-results"
+    conditions = (
+        CLEAN_CONDITION,
+        EvaluationCondition("jpeg", 30),
+        EvaluationCondition("noise", 0.02),
+    )
+
+    def fake_checkpoint_loader(checkpoint_path, device):
+        if Path(checkpoint_path).name == "a.pt":
+            return FixedLogitModel([-2.0, 2.0, 2.0, -2.0]), "a" * 64
+        return FixedLogitModel([-2.0, -2.0, 2.0, 2.0]), "b" * 64
+
+    monkeypatch.setattr(evaluate, "load_model_checkpoint", fake_checkpoint_loader)
+
+    predictions, metrics, comparison = run_robustness_comparison(
+        data_root=data_root,
+        manifest_path=manifest_path,
+        checkpoint_a=tmp_path / "a.pt",
+        checkpoint_b=tmp_path / "b.pt",
+        output_dir=output_dir,
+        batch_size=4,
+        num_workers=0,
+        device=torch.device("cpu"),
+        conditions=conditions,
+    )
+
+    assert len(predictions) == 4 * 2 * 3
+    assert len(metrics) == 2 * 3
+    assert len(comparison) == 3
+    for condition in conditions:
+        condition_rows = predictions[
+            predictions["transform"] == condition.name
+        ]
+        if condition.severity is not None:
+            condition_rows = condition_rows[
+                condition_rows["severity"] == condition.severity
+            ]
+        paths_by_model = condition_rows.groupby("model_id")["image_path"].apply(list)
+        assert paths_by_model["experiment_a"] == paths_by_model["experiment_b"]
+
+    for filename in ROBUSTNESS_FILENAMES.values():
+        assert (output_dir / filename).is_file()
+
+    with (output_dir / "robustness_config.json").open(encoding="utf-8") as file:
+        config = json.load(file)
+    assert config["num_conditions"] == 3
+    assert config["seed"] == 42

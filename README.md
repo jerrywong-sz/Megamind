@@ -161,19 +161,34 @@ python train.py --config configs/experiment_a.yaml   # TODO: not real yet
 
 ### 6. Evaluate against the challenge transform grid
 
-TODO — `evaluate.py` is still empty, so there is no runnable evaluation
-command yet. The building blocks it should use already exist and work
-today:
+`evaluate.py` loads checkpoints A and B, evaluates both on the same manifest
+rows in the same order, and records checkpoint hashes so a run can be traced
+back to the exact model files.
+
+First reproduce the clean validation results:
+
+```bash
+python evaluate.py --mode clean --data-root <dataset_root> --manifest <manifest.csv> --checkpoint-a <experiment_a.pt> --checkpoint-b <experiment_b.pt> --output-dir results/clean_validation --split val --device auto
+```
+
+After the clean integration check passes, run the fixed robustness grid:
+
+```bash
+python evaluate.py --mode robustness --data-root <dataset_root> --manifest <manifest.csv> --checkpoint-a <experiment_a.pt> --checkpoint-b <experiment_b.pt> --output-dir results/robustness_validation --split val --device auto --seed 42
+```
+
+The robustness runner uses:
 
 - `exact_transform(img, name, param)` in
-  [src/augmentations.py](src/augmentations.py) — applies one deterministic,
-  named transform. Names match the six challenge dimensions: `jpeg`,
-  `blur`, `resize`, `noise`, `colour`, `crop`.
+  [src/augmentations.py](src/augmentations.py) to apply each named transform.
+  Names match the six challenge dimensions: `jpeg`, `blur`, `resize`, `noise`,
+  `colour`, `crop`. Gaussian noise is seeded per image so A and B receive the
+  same noisy pixels and later runs are reproducible.
 - `compute_binary_metrics(labels, probabilities, threshold=0.5)` in
   [src/metrics.py](src/metrics.py) — returns accuracy, balanced accuracy,
   precision/recall/F1, AUROC, AUPRC, FPR/FNR, and Brier score.
 
-Once `evaluate.py` exists, run it at each of these exact values:
+It evaluates these 15 transformed conditions, plus clean:
 
 | Transform | Values |
 |---|---|
@@ -183,6 +198,15 @@ Once `evaluate.py` exists, run it at each of these exact values:
 | Noise (sigma) | 0.02, 0.05, 0.10 |
 | Colour jitter | ±20% |
 | Crop (fraction) | 80% |
+
+The robustness run writes:
+
+- `robustness_predictions.csv` — one row per image, model, and condition.
+- `robustness_metrics.csv` — full metrics for each model and condition.
+- `robustness_comparison.csv` — A/B accuracy, drop from clean, and the better
+  model for every condition.
+- `robustness_config.json` — split, seed, preprocessing, condition grid, and
+  checkpoint hashes used for the run.
 
 ### 7. Run predict.py for the final submission
 
