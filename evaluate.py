@@ -281,9 +281,9 @@ def run_clean_comparison(
     num_workers: int = 2,
     device: torch.device | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Evaluate checkpoints A and B fairly on one clean manifest split."""
+    """Evaluate two named checkpoints fairly on one clean manifest split."""
     if model_a_id == model_b_id:
-        raise ValueError("model A and model B must have different model IDs")
+        raise ValueError("the two checkpoints must have different model IDs")
     if not 0.0 <= threshold <= 1.0:
         raise ValueError("threshold must be between 0 and 1")
 
@@ -387,7 +387,7 @@ def build_robustness_comparison(
     model_a_id: str,
     model_b_id: str,
 ) -> pd.DataFrame:
-    """Compare A and B per condition and calculate drops from clean."""
+    """Compare two named models per condition and calculate clean drops."""
     clean_rows = metrics_table[metrics_table["transform"] == "clean"]
     clean_accuracy = clean_rows.set_index("model_id")["accuracy"].to_dict()
     if model_a_id not in clean_accuracy or model_b_id not in clean_accuracy:
@@ -458,9 +458,9 @@ def run_robustness_comparison(
     seed: int = 42,
     conditions: Sequence[EvaluationCondition] = ALL_EVALUATION_CONDITIONS,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Evaluate A and B under clean plus all fixed robustness conditions."""
+    """Evaluate two named models under all fixed robustness conditions."""
     if model_a_id == model_b_id:
-        raise ValueError("model A and model B must have different model IDs")
+        raise ValueError("the two checkpoints must have different model IDs")
     if not 0.0 <= threshold <= 1.0:
         raise ValueError("threshold must be between 0 and 1")
     if not conditions or not any(item.name == "clean" for item in conditions):
@@ -601,9 +601,12 @@ def run_robustness_comparison(
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
-    """Build the command-line interface for A-vs-B evaluation."""
+    """Build the command-line interface for a two-checkpoint comparison."""
     parser = argparse.ArgumentParser(
-        description="Compare checkpoints A and B on clean or transformed images.",
+        description=(
+            "Compare two named checkpoints on clean or transformed images. "
+            "Use --model-a-id and --model-b-id to label the two result sets."
+        ),
     )
     parser.add_argument(
         "--mode",
@@ -667,9 +670,19 @@ def main(argv: Sequence[str] | None = None) -> None:
                 "model_b_accuracy",
                 "b_minus_a_accuracy",
             ]
-        ]
+        ].rename(columns={
+            "model_a_accuracy": f"{args.model_a_id}_accuracy",
+            "model_b_accuracy": f"{args.model_b_id}_accuracy",
+            "b_minus_a_accuracy": (
+                f"{args.model_b_id}_minus_{args.model_a_id}"
+            ),
+        })
 
     print(f"Evaluation device: {device}")
+    print(
+        f"Comparison: {args.model_a_id} (first checkpoint) vs "
+        f"{args.model_b_id} (second checkpoint)"
+    )
     print(f"Results written to: {Path(args.output_dir)}")
     print(display_table)
 

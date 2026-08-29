@@ -290,3 +290,45 @@ def test_robustness_runner_writes_each_condition_for_both_models(
         config = json.load(file)
     assert config["num_conditions"] == 3
     assert config["seed"] == 42
+
+
+def test_robustness_runner_preserves_custom_b_and_c_model_ids(
+    tmp_path,
+    monkeypatch,
+):
+    data_root, manifest_path = _write_evaluation_fixture(tmp_path)
+    output_dir = tmp_path / "b-vs-c-results"
+    conditions = (CLEAN_CONDITION, EvaluationCondition("jpeg", 30))
+
+    def fake_checkpoint_loader(checkpoint_path, device):
+        if Path(checkpoint_path).name == "b.pt":
+            return FixedLogitModel([-2.0, 2.0, 2.0, -2.0]), "b" * 64
+        return FixedLogitModel([-2.0, -2.0, 2.0, 2.0]), "c" * 64
+
+    monkeypatch.setattr(evaluate, "load_model_checkpoint", fake_checkpoint_loader)
+
+    predictions, metrics, comparison = run_robustness_comparison(
+        data_root=data_root,
+        manifest_path=manifest_path,
+        checkpoint_a=tmp_path / "b.pt",
+        checkpoint_b=tmp_path / "c.pt",
+        output_dir=output_dir,
+        model_a_id="experiment_b",
+        model_b_id="experiment_c",
+        batch_size=4,
+        num_workers=0,
+        device=torch.device("cpu"),
+        conditions=conditions,
+    )
+
+    assert set(predictions["model_id"]) == {"experiment_b", "experiment_c"}
+    assert set(metrics["model_id"]) == {"experiment_b", "experiment_c"}
+    assert set(comparison["model_a_id"]) == {"experiment_b"}
+    assert set(comparison["model_b_id"]) == {"experiment_c"}
+
+    with (output_dir / "robustness_config.json").open(encoding="utf-8") as file:
+        config = json.load(file)
+    assert [item["model_id"] for item in config["checkpoints"]] == [
+        "experiment_b",
+        "experiment_c",
+    ]
