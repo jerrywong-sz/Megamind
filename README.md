@@ -133,47 +133,105 @@ combined CSV for `get_dataloaders()` — do that manually (e.g.
 
 ### 5. Train the three experiments
 
-TODO — `train.py` is still empty (open as PR #2, not yet merged) and
-`configs/` has no committed config yet, so there is no real training
-command to give here. Once it exists, it should be wired to:
+`train.py` trains one experiment per run from a YAML config plus a
+manifest/data-root pair. Verified CLI (from its `argparse` setup):
 
-- **Experiment A (clean baseline):** base preprocessing only —
-  `get_train_transform()` in [src/data.py](src/data.py) (`Resize(256) →
-  RandomCrop(224) → RandomHorizontalFlip → Normalize`; its docstring
-  already labels it "Experiment A"), no robustness damage applied.
-- **Experiment B (augmented):** same base preprocessing, plus
-  `random_transform()` from
-  [src/augmentations.py](src/augmentations.py), which applies 0–3 of
-  {JPEG, blur, resize, noise, colour, crop} per image with randomized
-  parameters.
-- **Experiment C (consistency):** same as B, plus a consistency penalty
-  between clean and damaged views of the same image. TODO: the loss isn't
-  implemented yet — `src/losses.py` is currently empty.
-
-Backbone (`build_model()`), seed, epochs, batch size, learning rate, and
-weight decay must be held identical across A/B/C so the ablation isolates
-the training method rather than confounding hyperparameters. TODO: fill in
-the actual values and command once `train.py` exists, e.g.:
-
+```bash
+python train.py --config <config.yaml> --manifest <manifest.csv> --data-root <dataset_root>
 ```
-python train.py --config configs/experiment_a.yaml   # TODO: not real yet
+
+- `--config` (required) — experiment YAML from `configs/`
+- `--manifest` (required) — the CSV manifest built in step 4
+- `--data-root` (required) — root directory the manifest's `image_path` values are relative to
+
+(identical arguments on Windows PowerShell and Mac/Linux)
+
+**Experiment A (clean baseline)** —
+[configs/baseline.yaml](configs/baseline.yaml):
+
+```bash
+python train.py --config configs/baseline.yaml --manifest <manifest.csv> --data-root <dataset_root>
 ```
+
+**Experiment B (robustness augmentation)** —
+[configs/robustness.yaml](configs/robustness.yaml):
+
+```bash
+python train.py --config configs/robustness.yaml --manifest <manifest.csv> --data-root <dataset_root>
+```
+
+The two configs share every hyperparameter except `train_mode`, so the
+ablation isolates the effect of robustness augmentation rather than a
+confound:
+
+| | A — `baseline.yaml` | B — `robustness.yaml` |
+|---|---|---|
+| seed | 42 | 42 |
+| pretrained | true | true |
+| image_size | 224 | 224 |
+| batch_size | 32 | 32 |
+| epochs | 5 | 5 |
+| learning_rate | 1e-4 | 1e-4 |
+| weight_decay | 1e-4 | 1e-4 |
+| amp | true | true |
+| train_mode | clean (default) | robust — applies `random_transform()` via `get_robust_train_transform()` in [src/data.py](src/data.py) |
+| checkpoint_name | baseline.pt | robustness.pt |
+
+Both A and B have already been trained; see **Results tables** below.
+
+**Experiment C (consistency):** same robustness augmentation as B, plus a
+consistency penalty between clean and damaged views of the same image
+(design recorded in [results/decisions.md](results/decisions.md)). TODO —
+not run yet: `robustness_loss()` in [src/losses.py](src/losses.py) already
+implements the classification-plus-consistency loss, but `train.py` isn't
+wired to use it yet (it only calls plain `BCEWithLogitsLoss`), and no
+`configs/experiment_c.yaml` exists.
 
 ### 6. Evaluate against the challenge transform grid
 
-TODO — `evaluate.py` is still empty, so there is no runnable evaluation
-command yet. The building blocks it should use already exist and work
-today:
+`evaluate.py` loads two named checkpoints, evaluates both on the same manifest
+rows in the same order, and records checkpoint hashes so a run can be traced
+back to the exact model files. The defaults call the two result sets
+`experiment_a` and `experiment_b`; pass explicit model IDs when comparing a
+different pair.
+
+First reproduce the clean validation results:
+
+```bash
+python evaluate.py --mode clean --data-root <dataset_root> --manifest <manifest.csv> --checkpoint-a <experiment_a.pt> --checkpoint-b <experiment_b.pt> --output-dir results/clean_validation --split val --device auto
+```
+
+After the clean integration check passes, run the fixed robustness grid:
+
+```bash
+python evaluate.py --mode robustness --data-root <dataset_root> --manifest <manifest.csv> --checkpoint-a <experiment_a.pt> --checkpoint-b <experiment_b.pt> --output-dir results/robustness_validation --split val --device auto --seed 42
+```
+
+To measure the additional contribution of consistency training, compare B
+against C with the same validation split, threshold, transformations, and
+seed. The `checkpoint-a`/`checkpoint-b` names mean first/second comparison
+slots here; the explicit IDs ensure every output row is labelled correctly:
+
+```bash
+python evaluate.py --mode robustness --data-root <dataset_root> --manifest <manifest.csv> --checkpoint-a <experiment_b_robustness_best.pt> --model-a-id experiment_b --checkpoint-b <experiment_c_consistency_best.pt> --model-b-id experiment_c --output-dir results/robustness_b_vs_c_validation --split val --device auto --seed 42
+```
+
+Keep the earlier A-versus-B result directory. Do not overwrite it. The saved
+A/B metrics and this B/C run can later be joined by transform and severity to
+produce the final A/B/C ablation table without rerunning A.
+
+The robustness runner uses:
 
 - `exact_transform(img, name, param)` in
-  [src/augmentations.py](src/augmentations.py) — applies one deterministic,
-  named transform. Names match the six challenge dimensions: `jpeg`,
-  `blur`, `resize`, `noise`, `colour`, `crop`.
+  [src/augmentations.py](src/augmentations.py) to apply each named transform.
+  Names match the six challenge dimensions: `jpeg`, `blur`, `resize`, `noise`,
+  `colour`, `crop`. Gaussian noise is seeded per image so A and B receive the
+  same noisy pixels and later runs are reproducible.
 - `compute_binary_metrics(labels, probabilities, threshold=0.5)` in
   [src/metrics.py](src/metrics.py) — returns accuracy, balanced accuracy,
   precision/recall/F1, AUROC, AUPRC, FPR/FNR, and Brier score.
 
-Once `evaluate.py` exists, run it at each of these exact values:
+It evaluates these 15 transformed conditions, plus clean:
 
 | Transform | Values |
 |---|---|
@@ -183,6 +241,15 @@ Once `evaluate.py` exists, run it at each of these exact values:
 | Noise (sigma) | 0.02, 0.05, 0.10 |
 | Colour jitter | ±20% |
 | Crop (fraction) | 80% |
+
+The robustness run writes:
+
+- `robustness_predictions.csv` — one row per image, model, and condition.
+- `robustness_metrics.csv` — full metrics for each model and condition.
+- `robustness_comparison.csv` — A/B accuracy, drop from clean, and the better
+  model for every condition.
+- `robustness_config.json` — split, seed, preprocessing, condition grid, and
+  checkpoint hashes used for the run.
 
 ### 7. Run predict.py for the final submission
 
@@ -200,9 +267,32 @@ produces the checkpoint we're submitting.
 
 ## Results tables
 
-TODO: accuracy/AUC on clean test images, and accuracy under each
-robustness transformation (compression, blur, resize, noise, colour jitter,
-crop), once evaluation has been run.
+### Clean validation — Experiments A and B
+
+Both trained on CIFAKE (68,712 train / 14,724 val images), 5 epochs, batch
+size 32, AdamW (lr 1e-4, weight decay 1e-4), AMP enabled; best checkpoint
+selected by lowest validation loss (epoch 5 for both).
+
+| Experiment | Training mode | Val Accuracy | Val Loss |
+|---|---|---:|---:|
+| A — Clean baseline | clean | 98.31% | 0.0528 |
+| B — Robustness augmentation | robust | 98.02% | 0.0563 |
+
+Source: [results/experiment_a_summary.md](results/experiment_a_summary.md),
+[results/experiment_b_summary.md](results/experiment_b_summary.md).
+Experiment B gives up only 0.29 points of clean accuracy relative to A —
+expected, since B optimizes for robustness rather than clean-set accuracy.
+
+**Not yet run:** the robustness evaluation across the 15 fixed transform
+conditions (JPEG 90/70/50/30, blur 0.5/1.0/2.0, resize 0.5x/0.25x, noise
+0.02/0.05/0.10, colour ±20%, crop 80% — step 6 above) hasn't been executed;
+no `robustness_metrics.csv` or `robustness_comparison.csv` exists in
+`results/` yet. **The table above is clean performance only — it says
+nothing about robustness, which is this project's actual target metric.**
+TODO: fill in per-condition accuracy and the A-vs-B robustness comparison
+once `evaluate.py --mode robustness` has been run. TODO: error analysis
+(which images/generators/conditions each model gets wrong) hasn't been done
+either.
 
 ## Limitations and what we'd improve with more time
 

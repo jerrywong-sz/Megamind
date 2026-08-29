@@ -2,6 +2,7 @@
 
 import os
 import random
+from collections.abc import Callable
 
 import pandas as pd
 import torch
@@ -67,6 +68,7 @@ class ManifestDataset(Dataset):
         manifest_path: str,
         split: str,
         transform=None,
+        pre_transform: Callable[[Image.Image, str], Image.Image] | None = None,
     ):
         self.data_root = data_root
         self.df = pd.read_csv(manifest_path)
@@ -75,6 +77,7 @@ class ManifestDataset(Dataset):
             .reset_index(drop=True)
         )
         self.transform = transform
+        self.pre_transform = pre_transform
 
     def __len__(self):
         return len(self.df)
@@ -88,6 +91,12 @@ class ManifestDataset(Dataset):
         )
 
         img = Image.open(full_path).convert("RGB")
+
+        if self.pre_transform:
+            img = self.pre_transform(
+                img,
+                row["image_path"],
+            )
 
         if self.transform:
             img = self.transform(img)
@@ -132,8 +141,6 @@ class ConsistencyManifestDataset(Dataset):
             .reset_index(drop=True)
         )
 
-        # After the clean/damaged pair has been created,
-        # both views receive exactly the same deterministic preprocessing.
         self.base_transform = get_eval_transform()
 
     def __len__(self):
@@ -149,9 +156,7 @@ class ConsistencyManifestDataset(Dataset):
 
         image = Image.open(full_path).convert("RGB")
 
-        # Apply the same random horizontal flip to BOTH views.
-        # This prevents the consistency loss from comparing two
-        # unnecessarily different orientations.
+        # Apply the same random horizontal flip to both views.
         if random.random() < 0.5:
             image = image.transpose(
                 Image.Transpose.FLIP_LEFT_RIGHT
@@ -252,3 +257,46 @@ def get_dataloaders(
     )
 
     return train_loader, val_loader
+
+
+def get_evaluation_dataloader(
+    data_root: str,
+    manifest_path: str,
+    split: str = "val",
+    batch_size: int = 32,
+    num_workers: int = 2,
+    pre_transform: Callable[[Image.Image, str], Image.Image] | None = None,
+) -> DataLoader:
+    """Build a deterministic DataLoader for one evaluation split.
+
+    Validation is used while checking and comparing model versions. The test
+    split is reserved for the final report after the evaluation choices are
+    fixed. Training rows are deliberately rejected here so they are not
+    accidentally presented as an unbiased result.
+    """
+    if split not in {"val", "test"}:
+        raise ValueError("evaluation split must be 'val' or 'test'")
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    if num_workers < 0:
+        raise ValueError("num_workers must be non-negative")
+
+    dataset = ManifestDataset(
+        data_root=data_root,
+        manifest_path=manifest_path,
+        split=split,
+        transform=get_eval_transform(),
+        pre_transform=pre_transform,
+    )
+
+    if len(dataset) == 0:
+        raise ValueError(
+            f"manifest contains no rows for split '{split}'"
+        )
+
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+    )
