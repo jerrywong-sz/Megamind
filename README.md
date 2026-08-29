@@ -161,9 +161,11 @@ python train.py --config configs/experiment_a.yaml   # TODO: not real yet
 
 ### 6. Evaluate against the challenge transform grid
 
-`evaluate.py` loads checkpoints A and B, evaluates both on the same manifest
+`evaluate.py` loads two named checkpoints, evaluates both on the same manifest
 rows in the same order, and records checkpoint hashes so a run can be traced
-back to the exact model files.
+back to the exact model files. The defaults call the two result sets
+`experiment_a` and `experiment_b`; pass explicit model IDs when comparing a
+different pair.
 
 First reproduce the clean validation results:
 
@@ -176,6 +178,19 @@ After the clean integration check passes, run the fixed robustness grid:
 ```bash
 python evaluate.py --mode robustness --data-root <dataset_root> --manifest <manifest.csv> --checkpoint-a <experiment_a.pt> --checkpoint-b <experiment_b.pt> --output-dir results/robustness_validation --split val --device auto --seed 42
 ```
+
+To measure the additional contribution of consistency training, compare B
+against C with the same validation split, threshold, transformations, and
+seed. The `checkpoint-a`/`checkpoint-b` names mean first/second comparison
+slots here; the explicit IDs ensure every output row is labelled correctly:
+
+```bash
+python evaluate.py --mode robustness --data-root <dataset_root> --manifest <manifest.csv> --checkpoint-a <experiment_b_robustness_best.pt> --model-a-id experiment_b --checkpoint-b <experiment_c_consistency_best.pt> --model-b-id experiment_c --output-dir results/robustness_b_vs_c_validation --split val --device auto --seed 42
+```
+
+Keep the earlier A-versus-B result directory. Do not overwrite it. The saved
+A/B metrics and this B/C run can later be joined by transform and severity to
+produce the final A/B/C ablation table without rerunning A.
 
 The robustness runner uses:
 
