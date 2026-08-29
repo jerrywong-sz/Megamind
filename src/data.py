@@ -1,6 +1,8 @@
 """Shared data-loading and preprocessing utilities."""
 
 import os
+import random
+import numpy as np
 from collections.abc import Callable
 
 import pandas as pd
@@ -111,6 +113,11 @@ class ManifestDataset(Dataset):
 
         return img, label, metadata
 
+def seed_worker(worker_id):
+    """Ensure Python's random and numpy use unique seeds in each DataLoader worker."""
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
 
 def get_dataloaders(
     data_root: str,
@@ -150,6 +157,7 @@ def get_dataloaders(
         shuffle=True,
         num_workers=2,
         drop_last=True,
+        worker_init_fn=seed_worker,
     )
 
     val_loader = DataLoader(
