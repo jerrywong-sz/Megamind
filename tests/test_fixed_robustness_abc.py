@@ -131,6 +131,12 @@ def test_condition_metadata_exposes_title_order_and_all_parameters():
     ]
 
 
+def test_single_condition_metadata_id_includes_severity():
+    metadata = condition_metadata(EvaluationCondition("jpeg", 70))
+
+    assert metadata["condition_id"] == "jpeg_70"
+
+
 def test_pairwise_and_combined_reports_use_explicit_model_names():
     condition = EvaluationCondition(
         name="fixed_test",
