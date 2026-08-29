@@ -74,3 +74,25 @@ def test_evaluation_dataloader_rejects_training_split(tmp_path):
             split="train",
             num_workers=0,
         )
+
+
+def test_evaluation_dataloader_applies_pre_transform_before_preprocessing(tmp_path):
+    data_root, manifest_path = _make_manifest(tmp_path)
+    transformed_paths = []
+
+    def replace_with_white(image, image_path):
+        transformed_paths.append(image_path)
+        return Image.new("RGB", image.size, "white")
+
+    data_loader = get_evaluation_dataloader(
+        data_root=str(data_root),
+        manifest_path=str(manifest_path),
+        split="test",
+        batch_size=1,
+        num_workers=0,
+        pre_transform=replace_with_white,
+    )
+    images, _, _ = next(iter(data_loader))
+
+    assert transformed_paths == ["train/REAL/test-real.jpg"]
+    assert images.shape == (1, 3, 224, 224)
