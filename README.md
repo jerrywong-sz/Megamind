@@ -93,8 +93,11 @@ above, then keep it active for every command below.
 
 ### 3. Expected raw directory layout
 
-`src/build_manifest.py` expects each dataset's raw images split into
-`REAL/` and `FAKE/` subfolders (searched recursively), e.g.:
+`src/build_manifest.py` expects each dataset's raw images under `REAL/`
+and `FAKE/` subfolders (searched recursively). A dataset with a tampered
+holdout (SID_Set) also gets an optional `TAMPERED/` subfolder — the
+crawler skips any of the three that doesn't exist, so a dataset without a
+tampered set (CIFAKE) only needs `REAL/`/`FAKE/`:
 
 ```
 data/
@@ -109,27 +112,65 @@ data/
       ...
     FAKE/
       ...
+    TAMPERED/
+      ...
 ```
 
 ### 4. Build the manifest CSV
 
-**`src/build_manifest.py` currently hardcodes Colab paths in its
-`if __name__ == "__main__"` block instead of accepting CLI arguments** —
-running `python src/build_manifest.py` as-is will try to read
-`/content/images/...` and fail on a local machine. Call the function
-directly with your own paths instead:
+`src/build_manifest.py` now has a real CLI (verified against its current
+`argparse` setup — note the flags use underscores, not hyphens):
 
 ```bash
-python -c "from src.build_manifest import build_and_split_manifest; build_and_split_manifest('data/CIFAKE/train', 'CIFAKE', 'SD1.4', 'data/cifake_manifest.csv')"
+python src/build_manifest.py --data_dir <raw_dataset_dir> --output_dir <standardized_output_dir> --dataset_name <name> --generator <name> --output_csv <manifest.csv>
 ```
 
 (identical command on Windows PowerShell and Mac/Linux)
 
-This hashes and de-duplicates images, balances classes 50/50, and writes a
-70/15/15 train/val/test split into the CSV. Run it once per dataset. TODO:
-there's no built-in way yet to merge multiple datasets' manifests into one
-combined CSV for `get_dataloaders()` — do that manually (e.g.
-`pandas.concat`) until that's added.
+Example for CIFAKE:
+
+```bash
+python src/build_manifest.py --data_dir data/CIFAKE/train --output_dir data/CIFAKE_standardized --dataset_name CIFAKE --generator SD1.4 --output_csv data/cifake_manifest.csv
+```
+
+Example for SID_Set (has a `TAMPERED/` folder):
+
+```bash
+python src/build_manifest.py --data_dir data/SID_Set --output_dir data/SID_Set_standardized --dataset_name SID_Set --generator <sid_generator_name> --output_csv data/sidset_manifest.csv
+```
+
+What it actually does, read from the current source:
+
+- Walks `REAL/` (label `0.0`), `FAKE/` (label `1.0`), and `TAMPERED/`
+  (label `2.0`) under `--data_dir`; a missing subfolder is skipped, so
+  CIFAKE (no tampered set) works with just `REAL/`/`FAKE/`.
+- Verifies each image isn't corrupted, hashes it for de-duplication,
+  converts it to RGB, and re-saves it as a standardized JPEG (quality 95)
+  under `--output_dir` — this neutralizes format bias, so the model can't
+  learn "file format" as a shortcut for real-vs-AI. Note: the re-saved
+  file keeps its **original extension** even though its bytes are
+  JPEG-encoded (the code computes a `.jpg`-suffixed path but doesn't use
+  the result) — this doesn't break loading since Pillow reads by content,
+  but don't be surprised to find JPEG data in a `.png`-named file if you
+  inspect `--output_dir` by hand.
+- `REAL`/`FAKE` rows are balanced 50/50 and split 70/15/15 into
+  train/val/test, as before.
+- **`TAMPERED` rows are excluded from that balancing/split** and instead
+  get `split = "bonus"` — a separate holdout, never mixed into
+  train/val/test.
+- The manifest's `image_path` column is the **re-saved** file's path
+  (`--output_dir` + the image's path relative to `--data_dir`), not the
+  original raw path.
+
+Run once per dataset. TODO: still no built-in way to merge multiple
+datasets' manifests into one combined CSV for `get_dataloaders()` — do
+that manually (e.g. `pandas.concat`) until that's added.
+
+**Important for later steps:** since `image_path` already has
+`--output_dir` baked into it, pass `--data-root .` to `train.py` /
+`evaluate.py` (i.e. run them from the same working directory you ran this
+command from) rather than pointing `--data-root` at `--output_dir` itself
+— otherwise the path gets prefixed twice and image loading will fail.
 
 ### 5. Train the three experiments
 
