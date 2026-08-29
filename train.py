@@ -289,10 +289,16 @@ def main():
         weight_decay=config["weight_decay"],
     )
 
+    train_mode = config.get(
+        "train_mode",
+        "clean",
+    )
+
     train_loader, val_loader = get_dataloaders(
         data_root=args.data_root,
         manifest_path=args.manifest,
         batch_size=config["batch_size"],
+        train_mode=train_mode,
     )
 
     checkpoint_path = (
@@ -307,6 +313,7 @@ def main():
     print("Optimizer:", optimizer.__class__.__name__)
     print("AMP:", amp_enabled)
     print("Manifest:", args.manifest)
+    print("Train mode:", train_mode)
 
     fit(
         model=model,

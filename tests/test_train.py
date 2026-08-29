@@ -239,6 +239,7 @@ def test_main_connects_manifest_dataloaders_to_fit(
         data_root=str(data_root),
         manifest_path=str(manifest_path),
         batch_size=8,
+        train_mode="clean",
     )
 
     fit_call = fit_mock.call_args.kwargs
