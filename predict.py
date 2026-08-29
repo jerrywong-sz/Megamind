@@ -57,6 +57,7 @@ def main():
     parser.add_argument("--checkpoint", default=None, type=Path, help="Path to a trained model checkpoint (.pt)")
     parser.add_argument("--output", required=True, type=Path, help="Path to write the output JSON to")
     parser.add_argument("--batch_size", default=32, type=int, help="Number of images per inference batch")
+    parser.add_argument("--threshold", default=0.5, type=float, help="Probability threshold for positive class")
     args = parser.parse_args()
 
     if not args.input_dir.is_dir():
@@ -114,6 +115,7 @@ def main():
         {
             "image_path": path.relative_to(args.input_dir).as_posix(),
             "pred": round(float(preds[idx]), 3),
+            "predicted_label": 1 if preds[idx] >= args.threshold else 0,
         }
         for idx, path in enumerate(image_paths)
     ]
