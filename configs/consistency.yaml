@@ -1,0 +1,19 @@
+experiment: consistency
+
+seed: 42
+pretrained: true
+
+image_size: 224
+batch_size: 32
+epochs: 5
+
+learning_rate: 0.0001
+weight_decay: 0.0001
+
+amp: true
+
+train_mode: consistency
+consistency_lambda: 0.5
+
+checkpoint_dir: checkpoints
+checkpoint_name: consistency.pt

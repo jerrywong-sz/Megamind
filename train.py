@@ -8,6 +8,7 @@ import torch.nn as nn
 import yaml
 
 from src.data import get_dataloaders
+from src.losses import robustness_loss
 from src.models import build_model
 
 
@@ -47,7 +48,7 @@ def train_one_epoch(
     scaler=None,
     amp_enabled=False,
 ):
-    """Train the model for one epoch."""
+    """Train Experiment A/B for one epoch."""
     model.train()
 
     total_loss = 0.0
@@ -105,6 +106,109 @@ def train_one_epoch(
     accuracy = total_correct / total_samples
 
     return average_loss, accuracy
+
+
+def train_one_epoch_consistency(
+    model,
+    train_loader,
+    optimizer,
+    device,
+    consistency_lambda,
+    scaler=None,
+    amp_enabled=False,
+):
+    """
+    Train Experiment C for one epoch.
+
+    Every source image has:
+    - one clean view
+    - one damaged view
+
+    Both must be classified correctly and should produce similar
+    AI probabilities.
+    """
+    model.train()
+
+    total_loss = 0.0
+    total_classification_loss = 0.0
+    total_consistency_loss = 0.0
+
+    total_correct = 0
+    total_predictions = 0
+    total_samples = 0
+
+    for clean_images, damaged_images, labels, *_ in train_loader:
+        clean_images = clean_images.to(device)
+        damaged_images = damaged_images.to(device)
+
+        labels = (
+            labels.float()
+            .view(-1, 1)
+            .to(device)
+        )
+
+        optimizer.zero_grad(set_to_none=True)
+
+        with torch.autocast(
+            device_type=device.type,
+            enabled=amp_enabled,
+        ):
+            logits_clean = model(clean_images)
+            logits_damaged = model(damaged_images)
+
+            loss, loss_cls, loss_con = robustness_loss(
+                logits_clean,
+                logits_damaged,
+                labels,
+                lam=consistency_lambda,
+            )
+
+        if amp_enabled:
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            optimizer.step()
+
+        batch_size = clean_images.size(0)
+
+        total_loss += loss.item() * batch_size
+        total_classification_loss += loss_cls.item() * batch_size
+        total_consistency_loss += loss_con.item() * batch_size
+        total_samples += batch_size
+
+        clean_predictions = (
+            torch.sigmoid(logits_clean) >= 0.5
+        ).float()
+
+        damaged_predictions = (
+            torch.sigmoid(logits_damaged) >= 0.5
+        ).float()
+
+        total_correct += (
+            (clean_predictions == labels).sum().item()
+            + (damaged_predictions == labels).sum().item()
+        )
+
+        total_predictions += 2 * batch_size
+
+    average_loss = total_loss / total_samples
+    average_classification_loss = (
+        total_classification_loss / total_samples
+    )
+    average_consistency_loss = (
+        total_consistency_loss / total_samples
+    )
+
+    accuracy = total_correct / total_predictions
+
+    return (
+        average_loss,
+        accuracy,
+        average_classification_loss,
+        average_consistency_loss,
+    )
 
 
 def validate_one_epoch(
@@ -175,6 +279,8 @@ def fit(
     epochs,
     checkpoint_path,
     amp_enabled=False,
+    train_mode="clean",
+    consistency_lambda=0.5,
 ):
     """Train and validate the model across multiple epochs."""
     best_val_loss = float("inf")
@@ -188,15 +294,36 @@ def fit(
     print("AMP enabled:", amp_enabled)
 
     for epoch in range(1, epochs + 1):
-        train_loss, train_accuracy = train_one_epoch(
-            model=model,
-            train_loader=train_loader,
-            criterion=criterion,
-            optimizer=optimizer,
-            device=device,
-            scaler=scaler,
-            amp_enabled=amp_enabled,
-        )
+
+        if train_mode == "consistency":
+            (
+                train_loss,
+                train_accuracy,
+                train_cls_loss,
+                train_con_loss,
+            ) = train_one_epoch_consistency(
+                model=model,
+                train_loader=train_loader,
+                optimizer=optimizer,
+                device=device,
+                consistency_lambda=consistency_lambda,
+                scaler=scaler,
+                amp_enabled=amp_enabled,
+            )
+
+        else:
+            train_loss, train_accuracy = train_one_epoch(
+                model=model,
+                train_loader=train_loader,
+                criterion=criterion,
+                optimizer=optimizer,
+                device=device,
+                scaler=scaler,
+                amp_enabled=amp_enabled,
+            )
+
+            train_cls_loss = None
+            train_con_loss = None
 
         val_loss, val_accuracy = validate_one_epoch(
             model=model,
@@ -206,21 +333,38 @@ def fit(
             amp_enabled=amp_enabled,
         )
 
-        print(
-            f"Epoch {epoch}/{epochs} | "
-            f"Train Loss: {train_loss:.4f} | "
-            f"Train Acc: {train_accuracy:.2%} | "
-            f"Val Loss: {val_loss:.4f} | "
-            f"Val Acc: {val_accuracy:.2%}"
-        )
+        if train_mode == "consistency":
+            print(
+                f"Epoch {epoch}/{epochs} | "
+                f"Train Loss: {train_loss:.4f} | "
+                f"Cls Loss: {train_cls_loss:.4f} | "
+                f"Con Loss: {train_con_loss:.4f} | "
+                f"Train Acc: {train_accuracy:.2%} | "
+                f"Val Loss: {val_loss:.4f} | "
+                f"Val Acc: {val_accuracy:.2%}"
+            )
+        else:
+            print(
+                f"Epoch {epoch}/{epochs} | "
+                f"Train Loss: {train_loss:.4f} | "
+                f"Train Acc: {train_accuracy:.2%} | "
+                f"Val Loss: {val_loss:.4f} | "
+                f"Val Acc: {val_accuracy:.2%}"
+            )
 
-        history.append({
+        epoch_history = {
             "epoch": epoch,
             "train_loss": train_loss,
             "train_accuracy": train_accuracy,
             "val_loss": val_loss,
             "val_accuracy": val_accuracy,
-        })
+        }
+
+        if train_mode == "consistency":
+            epoch_history["classification_loss"] = train_cls_loss
+            epoch_history["consistency_loss"] = train_con_loss
+
+        history.append(epoch_history)
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -294,6 +438,18 @@ def main():
         "clean",
     )
 
+    consistency_lambda = float(
+        config.get(
+            "consistency_lambda",
+            0.5,
+        )
+    )
+
+    if consistency_lambda < 0:
+        raise ValueError(
+            "consistency_lambda must be non-negative"
+        )
+
     train_loader, val_loader = get_dataloaders(
         data_root=args.data_root,
         manifest_path=args.manifest,
@@ -315,6 +471,12 @@ def main():
     print("Manifest:", args.manifest)
     print("Train mode:", train_mode)
 
+    if train_mode == "consistency":
+        print(
+            "Consistency lambda:",
+            consistency_lambda,
+        )
+
     fit(
         model=model,
         train_loader=train_loader,
@@ -325,6 +487,8 @@ def main():
         epochs=config["epochs"],
         checkpoint_path=checkpoint_path,
         amp_enabled=amp_enabled,
+        train_mode=train_mode,
+        consistency_lambda=consistency_lambda,
     )
 
 

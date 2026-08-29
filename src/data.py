@@ -1,6 +1,7 @@
 """Shared data-loading and preprocessing utilities."""
 
 import os
+import random
 
 import pandas as pd
 import torch
@@ -106,6 +107,90 @@ class ManifestDataset(Dataset):
         return img, label, metadata
 
 
+class ConsistencyManifestDataset(Dataset):
+    """
+    Experiment C dataset.
+
+    Each source image produces two views:
+    1. a clean view
+    2. a randomly damaged view
+
+    Both views keep the same label.
+    """
+
+    def __init__(
+        self,
+        data_root: str,
+        manifest_path: str,
+        split: str,
+    ):
+        self.data_root = data_root
+
+        self.df = pd.read_csv(manifest_path)
+        self.df = (
+            self.df[self.df["split"] == split]
+            .reset_index(drop=True)
+        )
+
+        # After the clean/damaged pair has been created,
+        # both views receive exactly the same deterministic preprocessing.
+        self.base_transform = get_eval_transform()
+
+    def __len__(self):
+        return len(self.df)
+
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+
+        full_path = os.path.join(
+            self.data_root,
+            row["image_path"],
+        )
+
+        image = Image.open(full_path).convert("RGB")
+
+        # Apply the same random horizontal flip to BOTH views.
+        # This prevents the consistency loss from comparing two
+        # unnecessarily different orientations.
+        if random.random() < 0.5:
+            image = image.transpose(
+                Image.Transpose.FLIP_LEFT_RIGHT
+            )
+
+        clean_image = image.copy()
+
+        damaged_image = random_transform(
+            image.copy()
+        )
+
+        clean_tensor = self.base_transform(
+            clean_image
+        )
+
+        damaged_tensor = self.base_transform(
+            damaged_image
+        )
+
+        label = torch.tensor(
+            [row["label"]],
+            dtype=torch.float32,
+        )
+
+        metadata = {
+            "image_path": row["image_path"],
+            "dataset": row["dataset"],
+            "generator": row["generator"],
+            "format": row["format"],
+        }
+
+        return (
+            clean_tensor,
+            damaged_tensor,
+            label,
+            metadata,
+        )
+
+
 def get_dataloaders(
     data_root: str,
     manifest_path: str,
@@ -115,22 +200,35 @@ def get_dataloaders(
     """Build reproducible train/validation DataLoaders."""
 
     if train_mode == "clean":
-        train_transform = get_train_transform()
+        train_dataset = ManifestDataset(
+            data_root=data_root,
+            manifest_path=manifest_path,
+            split="train",
+            transform=get_train_transform(),
+        )
+
     elif train_mode == "robust":
-        train_transform = get_robust_train_transform()
+        train_dataset = ManifestDataset(
+            data_root=data_root,
+            manifest_path=manifest_path,
+            split="train",
+            transform=get_robust_train_transform(),
+        )
+
+    elif train_mode == "consistency":
+        train_dataset = ConsistencyManifestDataset(
+            data_root=data_root,
+            manifest_path=manifest_path,
+            split="train",
+        )
+
     else:
         raise ValueError(
             f"Unknown train_mode '{train_mode}'. "
-            "Expected 'clean' or 'robust'."
+            "Expected 'clean', 'robust', or 'consistency'."
         )
 
-    train_dataset = ManifestDataset(
-        data_root=data_root,
-        manifest_path=manifest_path,
-        split="train",
-        transform=train_transform,
-    )
-
+    # Validation always stays clean and identical across A/B/C.
     val_dataset = ManifestDataset(
         data_root=data_root,
         manifest_path=manifest_path,
