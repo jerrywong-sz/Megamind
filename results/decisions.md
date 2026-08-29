@@ -57,3 +57,32 @@ A → conventional detector
 B → effect of robustness augmentation
 
 C → additional effect of explicit consistency training
+
+## Format Normalization
+
+`build_manifest.py` re-saves every image as a standard JPEG (quality 95,
+alpha channel stripped) into a separate output directory before training,
+rather than using the original files in place.
+
+Reasoning: if real and AI images came from sources with different file
+formats (e.g. real images predominantly JPEG, fake images predominantly
+PNG), the model could learn to read the file format as a shortcut instead
+of the image content — scoring well on our data while being useless in
+the real world. Forcing every image through identical JPEG re-encoding
+removes that shortcut. It also means every image carries the same JPEG
+compression artifacts going in, so the model can't use compression
+history as a class signal either.
+
+## Tampered Image Holdout (SID_Set)
+
+SID_Set has three classes: `0` real, `1` fully synthetic, `2` tampered
+(a real photo with an AI-generated region inserted). The challenge is
+binary, so tampered images are excluded from the 50/50 real/fake class
+balancing and routed to a separate `bonus` split instead of
+train/val/test.
+
+Reasoning: a tampered image is mostly authentic pixels, so training on it
+as "AI" risks pushing the model toward false positives on genuine
+photographs — exactly what the challenge warns against. Tampered images
+are held back for separate bonus analysis instead of being folded into
+the main real/fake split.
