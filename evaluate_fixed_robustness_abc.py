@@ -778,7 +778,27 @@ def build_argument_parser() -> argparse.ArgumentParser:
     )
     return parser
 
-
+def calculate_headline_metrics(abc_summary: pd.DataFrame, model_ids: list[str]):
+    """Calculate the Mean, Worst-Case, and Robustness Gap for AUROC."""
+    clean_row = abc_summary[abc_summary["condition_id"] == "clean"].iloc[0]
+    damaged_rows = abc_summary[abc_summary["condition_id"] != "clean"]
+    
+    print("\n" + "="*50)
+    print("DAY 2 HEADLINE METRICS (AUROC)")
+    print("="*50)
+    
+    for model_id in model_ids:
+        clean_auroc = float(clean_row[f"{model_id}__auroc"])
+        mean_damaged_auroc = float(damaged_rows[f"{model_id}__auroc"].mean())
+        worst_damaged_auroc = float(damaged_rows[f"{model_id}__auroc"].min())
+        robustness_gap = clean_auroc - mean_damaged_auroc
+        
+        print(f"\n{model_id}:")
+        print(f"  Clean AUROC:          {clean_auroc:.4f}")
+        print(f"  Mean Transformed:     {mean_damaged_auroc:.4f}")
+        print(f"  Worst-Case:           {worst_damaged_auroc:.4f}")
+        print(f"  Robustness Gap:       {robustness_gap:.4f}")
+        
 def main(argv: Sequence[str] | None = None) -> None:
     args = build_argument_parser().parse_args(argv)
     device = resolve_device(args.device)
@@ -818,6 +838,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     print(f"Condition set: {args.condition_set}")
     print(f"Results written to: {Path(args.output_dir)}")
     print(abc_summary[display_columns])
+    
+    calculate_headline_metrics(abc_summary, [MODEL_A_ID, MODEL_B_ID, MODEL_C_ID])
 
 
 if __name__ == "__main__":
