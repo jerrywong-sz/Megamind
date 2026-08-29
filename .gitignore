@@ -222,4 +222,4 @@ data/
 checkpoints/
 
 # Ignore downloaded hackathon data
-images/
+images/results/robustness_predictions.csv
