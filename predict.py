@@ -42,7 +42,9 @@ def load_model(checkpoint: Path | None, device: torch.device):
         return None
 
     model = build_model(pretrained=False)
-    state_dict = torch.load(checkpoint, map_location=device)
+    checkpoint_data = torch.load(checkpoint, map_location=device)
+    # Handle both old weights-only checkpoints and new dictionary checkpoints
+    state_dict = checkpoint_data.get("model_state", checkpoint_data) if isinstance(checkpoint_data, dict) else checkpoint_data
     model.load_state_dict(state_dict)
     model.to(device)
     model.eval()

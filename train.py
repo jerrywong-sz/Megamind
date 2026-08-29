@@ -21,13 +21,17 @@ def set_seed(seed):
         torch.cuda.manual_seed_all(seed)
 
 
-def save_checkpoint(model, checkpoint_path):
+def save_checkpoint(model, optimizer, epoch, checkpoint_path):
     """Save model weights to disk."""
     checkpoint_path = Path(checkpoint_path)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
 
     torch.save(
-        model.state_dict(),
+        {
+            "epoch": epoch,
+            "model_state": model.state_dict(),
+            "optimizer_state": optimizer.state_dict(),
+        },
         checkpoint_path,
     )
 
@@ -227,6 +231,8 @@ def fit(
 
             save_checkpoint(
                 model,
+                optimizer,
+                epoch,
                 checkpoint_path,
             )
 
