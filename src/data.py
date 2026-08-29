@@ -154,3 +154,42 @@ def get_dataloaders(
     )
 
     return train_loader, val_loader
+
+
+def get_evaluation_dataloader(
+    data_root: str,
+    manifest_path: str,
+    split: str = "val",
+    batch_size: int = 32,
+    num_workers: int = 2,
+) -> DataLoader:
+    """Build a deterministic DataLoader for one evaluation split.
+
+    Validation is used while checking and comparing model versions. The test
+    split is reserved for the final report after the evaluation choices are
+    fixed. Training rows are deliberately rejected here so they are not
+    accidentally presented as an unbiased result.
+    """
+    if split not in {"val", "test"}:
+        raise ValueError("evaluation split must be 'val' or 'test'")
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    if num_workers < 0:
+        raise ValueError("num_workers must be non-negative")
+
+    dataset = ManifestDataset(
+        data_root=data_root,
+        manifest_path=manifest_path,
+        split=split,
+        transform=get_eval_transform(),
+    )
+
+    if len(dataset) == 0:
+        raise ValueError(f"manifest contains no rows for split '{split}'")
+
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+    )
