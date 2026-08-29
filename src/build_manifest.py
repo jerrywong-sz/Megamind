@@ -55,11 +55,11 @@ def build_and_split_manifest(data_dir, output_dir, dataset_name, generator_name,
                 continue
             seen_hashes.add(meta["hash"])
             
-            # Enforce the Tampered Holdout Rule (PDF Page 4)
-            split_override = "bonus" if label_val == 2.0 else None
+            # Convert /content/images/CIFAKE/train/REAL/img.jpg to train/REAL/img.jpg
+            relative_path = str(img_path.relative_to(Path(data_dir).parent))
 
             records.append({
-                "image_path": meta["new_path"], "label": label_val, 
+                "image_path": relative_path, "label": label_val, 
                 "dataset": dataset_name, "generator": generator_name,
                 "width": meta["width"], "height": meta["height"], 
                 "format": meta["format"], "split_override": split_override

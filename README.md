@@ -93,11 +93,8 @@ above, then keep it active for every command below.
 
 ### 3. Expected raw directory layout
 
-`src/build_manifest.py` expects each dataset's raw images under `REAL/`
-and `FAKE/` subfolders (searched recursively). A dataset with a tampered
-holdout (SID_Set) also gets an optional `TAMPERED/` subfolder — the
-crawler skips any of the three that doesn't exist, so a dataset without a
-tampered set (CIFAKE) only needs `REAL/`/`FAKE/`:
+`src/build_manifest.py` expects each dataset's raw images split into
+`REAL/` and `FAKE/` subfolders (searched recursively), e.g.:
 
 ```
 data/
@@ -112,121 +109,55 @@ data/
       ...
     FAKE/
       ...
-    TAMPERED/
-      ...
 ```
 
 ### 4. Build the manifest CSV
 
-`src/build_manifest.py` now has a real CLI (verified against its current
-`argparse` setup — note the flags use underscores, not hyphens):
+**`src/build_manifest.py` currently hardcodes Colab paths in its
+`if __name__ == "__main__"` block instead of accepting CLI arguments** —
+running `python src/build_manifest.py` as-is will try to read
+`/content/images/...` and fail on a local machine. Call the function
+directly with your own paths instead:
 
 ```bash
-python src/build_manifest.py --data_dir <raw_dataset_dir> --output_dir <standardized_output_dir> --dataset_name <name> --generator <name> --output_csv <manifest.csv>
+python -c "from src.build_manifest import build_and_split_manifest; build_and_split_manifest('data/CIFAKE/train', 'CIFAKE', 'SD1.4', 'data/cifake_manifest.csv')"
 ```
 
 (identical command on Windows PowerShell and Mac/Linux)
 
-Example for CIFAKE:
-
-```bash
-python src/build_manifest.py --data_dir data/CIFAKE/train --output_dir data/CIFAKE_standardized --dataset_name CIFAKE --generator SD1.4 --output_csv data/cifake_manifest.csv
-```
-
-Example for SID_Set (has a `TAMPERED/` folder):
-
-```bash
-python src/build_manifest.py --data_dir data/SID_Set --output_dir data/SID_Set_standardized --dataset_name SID_Set --generator <sid_generator_name> --output_csv data/sidset_manifest.csv
-```
-
-What it actually does, read from the current source:
-
-- Walks `REAL/` (label `0.0`), `FAKE/` (label `1.0`), and `TAMPERED/`
-  (label `2.0`) under `--data_dir`; a missing subfolder is skipped, so
-  CIFAKE (no tampered set) works with just `REAL/`/`FAKE/`.
-- Verifies each image isn't corrupted, hashes it for de-duplication,
-  converts it to RGB, and re-saves it as a standardized JPEG (quality 95)
-  under `--output_dir` — this neutralizes format bias, so the model can't
-  learn "file format" as a shortcut for real-vs-AI. Note: the re-saved
-  file keeps its **original extension** even though its bytes are
-  JPEG-encoded (the code computes a `.jpg`-suffixed path but doesn't use
-  the result) — this doesn't break loading since Pillow reads by content,
-  but don't be surprised to find JPEG data in a `.png`-named file if you
-  inspect `--output_dir` by hand.
-- `REAL`/`FAKE` rows are balanced 50/50 and split 70/15/15 into
-  train/val/test, as before.
-- **`TAMPERED` rows are excluded from that balancing/split** and instead
-  get `split = "bonus"` — a separate holdout, never mixed into
-  train/val/test.
-- The manifest's `image_path` column is the **re-saved** file's path
-  (`--output_dir` + the image's path relative to `--data_dir`), not the
-  original raw path.
-
-Run once per dataset. TODO: still no built-in way to merge multiple
-datasets' manifests into one combined CSV for `get_dataloaders()` — do
-that manually (e.g. `pandas.concat`) until that's added.
-
-**Important for later steps:** since `image_path` already has
-`--output_dir` baked into it, pass `--data-root .` to `train.py` /
-`evaluate.py` (i.e. run them from the same working directory you ran this
-command from) rather than pointing `--data-root` at `--output_dir` itself
-— otherwise the path gets prefixed twice and image loading will fail.
+This hashes and de-duplicates images, balances classes 50/50, and writes a
+70/15/15 train/val/test split into the CSV. Run it once per dataset. TODO:
+there's no built-in way yet to merge multiple datasets' manifests into one
+combined CSV for `get_dataloaders()` — do that manually (e.g.
+`pandas.concat`) until that's added.
 
 ### 5. Train the three experiments
 
-`train.py` trains one experiment per run from a YAML config plus a
-manifest/data-root pair. Verified CLI (from its `argparse` setup):
+TODO — `train.py` is still empty (open as PR #2, not yet merged) and
+`configs/` has no committed config yet, so there is no real training
+command to give here. Once it exists, it should be wired to:
 
-```bash
-python train.py --config <config.yaml> --manifest <manifest.csv> --data-root <dataset_root>
+- **Experiment A (clean baseline):** base preprocessing only —
+  `get_train_transform()` in [src/data.py](src/data.py) (`Resize(256) →
+  RandomCrop(224) → RandomHorizontalFlip → Normalize`; its docstring
+  already labels it "Experiment A"), no robustness damage applied.
+- **Experiment B (augmented):** same base preprocessing, plus
+  `random_transform()` from
+  [src/augmentations.py](src/augmentations.py), which applies 0–3 of
+  {JPEG, blur, resize, noise, colour, crop} per image with randomized
+  parameters.
+- **Experiment C (consistency):** same as B, plus a consistency penalty
+  between clean and damaged views of the same image. TODO: the loss isn't
+  implemented yet — `src/losses.py` is currently empty.
+
+Backbone (`build_model()`), seed, epochs, batch size, learning rate, and
+weight decay must be held identical across A/B/C so the ablation isolates
+the training method rather than confounding hyperparameters. TODO: fill in
+the actual values and command once `train.py` exists, e.g.:
+
 ```
-
-- `--config` (required) — experiment YAML from `configs/`
-- `--manifest` (required) — the CSV manifest built in step 4
-- `--data-root` (required) — root directory the manifest's `image_path` values are relative to
-
-(identical arguments on Windows PowerShell and Mac/Linux)
-
-**Experiment A (clean baseline)** —
-[configs/baseline.yaml](configs/baseline.yaml):
-
-```bash
-python train.py --config configs/baseline.yaml --manifest <manifest.csv> --data-root <dataset_root>
+python train.py --config configs/experiment_a.yaml   # TODO: not real yet
 ```
-
-**Experiment B (robustness augmentation)** —
-[configs/robustness.yaml](configs/robustness.yaml):
-
-```bash
-python train.py --config configs/robustness.yaml --manifest <manifest.csv> --data-root <dataset_root>
-```
-
-The two configs share every hyperparameter except `train_mode`, so the
-ablation isolates the effect of robustness augmentation rather than a
-confound:
-
-| | A — `baseline.yaml` | B — `robustness.yaml` |
-|---|---|---|
-| seed | 42 | 42 |
-| pretrained | true | true |
-| image_size | 224 | 224 |
-| batch_size | 32 | 32 |
-| epochs | 5 | 5 |
-| learning_rate | 1e-4 | 1e-4 |
-| weight_decay | 1e-4 | 1e-4 |
-| amp | true | true |
-| train_mode | clean (default) | robust — applies `random_transform()` via `get_robust_train_transform()` in [src/data.py](src/data.py) |
-| checkpoint_name | baseline.pt | robustness.pt |
-
-Both A and B have already been trained; see **Results tables** below.
-
-**Experiment C (consistency):** same robustness augmentation as B, plus a
-consistency penalty between clean and damaged views of the same image
-(design recorded in [results/decisions.md](results/decisions.md)). TODO —
-not run yet: `robustness_loss()` in [src/losses.py](src/losses.py) already
-implements the classification-plus-consistency loss, but `train.py` isn't
-wired to use it yet (it only calls plain `BCEWithLogitsLoss`), and no
-`configs/experiment_c.yaml` exists.
 
 ### 6. Evaluate against the challenge transform grid
 
