@@ -324,16 +324,79 @@ Source: [results/experiment_a_summary.md](results/experiment_a_summary.md),
 Experiment B gives up only 0.29 points of clean accuracy relative to A —
 expected, since B optimizes for robustness rather than clean-set accuracy.
 
-**Not yet run:** the robustness evaluation across the 15 fixed transform
-conditions (JPEG 90/70/50/30, blur 0.5/1.0/2.0, resize 0.5x/0.25x, noise
-0.02/0.05/0.10, colour ±20%, crop 80% — step 6 above) hasn't been executed;
-no `robustness_metrics.csv` or `robustness_comparison.csv` exists in
-`results/` yet. **The table above is clean performance only — it says
-nothing about robustness, which is this project's actual target metric.**
-TODO: fill in per-condition accuracy and the A-vs-B robustness comparison
-once `evaluate.py --mode robustness` has been run. TODO: error analysis
-(which images/generators/conditions each model gets wrong) hasn't been done
-either.
+### Robustness evaluation — Experiment B vs. Experiment C
+
+Source: `results/robustness_comparison.csv`. In that file's `model_a`/
+`model_b` columns, "a" and "b" mean first/second comparison slot, **not**
+Experiment A/B — for this run, slot **a is Experiment B** (robustness
+augmentation) and slot **b is Experiment C** (consistency training). The
+table below is relabeled with the actual experiment names to avoid that
+confusion.
+
+| Condition | Exp B Acc | Exp C Acc | Exp B AUROC | Exp C AUROC | Exp B drop from clean | Exp C drop from clean |
+|---|---:|---:|---:|---:|---:|---:|
+| clean | 98.03% | 98.21% | 99.80% | 99.84% | — | — |
+| jpeg q90 | 98.00% | 98.08% | 99.79% | 99.81% | 0.03pp | 0.14pp |
+| jpeg q70 | 98.06% | 98.10% | 99.81% | 99.83% | -0.03pp | 0.12pp |
+| jpeg q50 | 97.34% | 97.17% | 99.64% | 99.58% | 0.69pp | 1.05pp |
+| jpeg q30 | 96.46% | 96.04% | 99.44% | 99.38% | 1.57pp | 2.17pp |
+| blur σ0.5 | 97.53% | 97.33% | 99.72% | 99.73% | 0.50pp | 0.88pp |
+| blur σ1.0 | 95.89% | 95.33% | 99.33% | 99.16% | 2.14pp | 2.88pp |
+| blur σ2.0 | 91.77% | 91.13% | 97.68% | 97.26% | 6.26pp | 7.08pp |
+| resize 0.5x | 95.35% | 95.41% | 99.32% | 99.20% | 2.68pp | 2.80pp |
+| resize 0.25x | 91.37% | 90.96% | 97.54% | 97.04% | 6.66pp | 7.25pp |
+| noise σ0.02 | 97.63% | 97.77% | 99.74% | 99.80% | 0.40pp | 0.44pp |
+| noise σ0.05 | 96.84% | 97.20% | 99.60% | 99.67% | 1.20pp | 1.02pp |
+| noise σ0.10 | 94.91% | 94.57% | 99.01% | 98.99% | 3.12pp | 3.64pp |
+| colour -20% | 96.95% | 97.05% | 99.63% | 99.66% | 1.08pp | 1.17pp |
+| colour +20% | 96.34% | 96.54% | 99.59% | 99.58% | 1.69pp | 1.67pp |
+| crop 80% | 95.96% | 96.15% | 99.33% | 99.40% | 2.07pp | 2.06pp |
+
+**Finding, stated plainly: consistency training (C) performed comparably
+to augmentation alone (B) — this is not a clear win.** C was marginally
+better on clean and on mild single-transform conditions (low JPEG
+compression, light noise, colour jitter, crop), and marginally worse under
+heavy single-transform degradation (blur, resize, aggressive JPEG/noise)
+and under every chained transform but one. Every single-condition
+difference between the two is under 1.5 percentage points either way — a
+genuine tie within noise, not evidence the consistency loss achieved its
+intended goal.
+
+**Chained conditions.** Evaluation also covered 5 chained transforms
+beyond the challenge's 15 single conditions, testing whether
+transformations compose — real-world images are rarely degraded by just
+one operation:
+
+| Chain | Exp B Acc | Exp C Acc | Exp B drop from clean | Exp C drop from clean | Seen during training? |
+|---|---:|---:|---:|---:|---|
+| resize 0.5x + jpeg q70 | 95.48% | 94.70% | 2.55pp | 3.52pp | Yes |
+| resize 0.25x + jpeg q50 | 88.90% | 87.86% | 9.13pp | 10.35pp | No |
+| crop 80% + colour +20% + jpeg q50 | 93.32% | 91.93% | 4.71pp | 6.28pp | No |
+| screenshot resample + jpeg q70 | 95.02% | 94.04% | 3.01pp | 4.17pp | No |
+| repeated jpeg (q90→q70→q50) | 97.17% | 97.22% | 0.86pp | 0.99pp | No |
+
+**resize 0.25x + jpeg q50 is the hardest condition in the entire
+evaluation** — its ~9-10pp accuracy drop exceeds even the worst single
+transform (blur σ2.0, ~6-7pp), for both models. Chaining transforms
+compounds damage rather than just adding it. This is also the only chain
+that resembles something the robustness augmentation's random parameter
+ranges could have produced during training; the other three novel chains
+(screenshot resample, triple-repeated JPEG, crop+colour+JPEG) were not,
+and still degraded gracefully rather than catastrophically — except for
+the resize+JPEG combination above.
+
+**TODO — the missing piece: Experiment A (the clean baseline) has not
+been evaluated under this robustness grid.** Every comparison above is
+augmentation (B) vs. consistency (C); neither has been benchmarked
+against the un-augmented baseline. Without A's robustness numbers, we
+cannot currently quantify what robustness augmentation itself
+contributed over doing nothing — only that B and C perform similarly to
+*each other* once augmented. Running `evaluate.py --mode robustness`
+with A's checkpoint against either B or C is required before the A/B/C
+ablation in `results/decisions.md` can actually be completed.
+
+TODO: error analysis (which images/generators/conditions each model gets
+wrong) hasn't been done either.
 
 ## Limitations and what we'd improve with more time
 
