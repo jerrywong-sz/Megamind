@@ -84,7 +84,7 @@ def main():
         if model is None:
             probs = torch.rand(batch.size(0))
         else:
-            with torch.no_grad():
+            with torch.inference_mode():
                 logits = model(batch).squeeze(1)
                 probs = torch.sigmoid(logits)
 
