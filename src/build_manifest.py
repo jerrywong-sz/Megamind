@@ -2,17 +2,34 @@ import os
 import hashlib
 import pandas as pd
 import numpy as np
+import argparse
 from PIL import Image
 from pathlib import Path
 
-def get_image_meta(img_path):
+def process_and_resave_image(img_path, output_dir, relative_path):
+    """Checks for corruption, hashes, and forces EVERYTHING to standard JPEG."""
     try:
         with Image.open(img_path) as img:
             img.verify() # Corruption check
+            
         with open(img_path, "rb") as f:
             file_hash = hashlib.sha256(f.read()).hexdigest()
+            
+        # Re-open for conversion
         with Image.open(img_path) as img:
-            return {"width": img.width, "height": img.height, "format": img.format, "hash": file_hash}
+            width, height = img.width, img.height
+            img_rgb = img.convert('RGB') # Strip alpha channels
+            
+            # Save standardized JPEG to the new output directory
+            save_path = Path(output_dir) / relative_path
+            save_path.with_suffix('.jpg') # Force .jpg extension
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # This is the magic line that destroys format bias!
+            img_rgb.save(save_path, format='JPEG', quality=95)
+            
+            return {"width": width, "height": height, "format": "JPEG", "hash": file_hash, "new_path": str(save_path)}
+            
     except Exception:
         return None
 
