@@ -308,6 +308,12 @@ produces the checkpoint we're submitting.
 
 ## Results tables
 
+> **Scope of every result below:** all of it was trained and evaluated on
+> **CIFAKE** only — 32×32 images, **Stable Diffusion 1.4** as the sole
+> generator. None of it touches **SID_Set** yet. These numbers say nothing
+> about performance on high-resolution images or on generators the model
+> hasn't seen — that generalization is untested.
+
 ### Clean validation — Experiments A and B
 
 Both trained on CIFAKE (68,712 train / 14,724 val images), 5 epochs, batch
@@ -324,14 +330,50 @@ Source: [results/experiment_a_summary.md](results/experiment_a_summary.md),
 Experiment B gives up only 0.29 points of clean accuracy relative to A —
 expected, since B optimizes for robustness rather than clean-set accuracy.
 
+### Robustness evaluation — Experiment A vs. Experiment B
+
+Source: `results/robustness_comparison_a_vs_b.csv` (accuracy, per-condition)
+and `results/robustness_metrics_a_b.csv` (AUROC and other per-condition
+metrics).
+
+| Condition | Exp A Acc | Exp B Acc | Exp A AUROC | Exp B AUROC | Exp A drop from clean | Exp B drop from clean |
+|---|---:|---:|---:|---:|---:|---:|
+| clean | 98.32% | 98.03% | 99.84% | 99.80% | — | — |
+| jpeg q90 | 98.26% | 98.00% | 99.81% | 99.79% | 0.05pp | 0.03pp |
+| jpeg q70 | 98.06% | 98.06% | 99.80% | 99.81% | 0.25pp | -0.03pp |
+| jpeg q50 | 96.53% | 97.34% | 99.40% | 99.64% | 1.79pp | 0.69pp |
+| jpeg q30 | 92.89% | 96.46% | 98.80% | 99.44% | 5.43pp | 1.57pp |
+| blur σ0.5 | 85.33% | 97.53% | 99.36% | 99.72% | 12.99pp | 0.50pp |
+| blur σ1.0 | 65.84% | 95.89% | 80.40% | 99.33% | 32.48pp | 2.14pp |
+| blur σ2.0 | 57.75% | 91.77% | 77.07% | 97.68% | 40.57pp | 6.26pp |
+| resize 0.5x | 62.33% | 95.35% | 84.88% | 99.32% | 35.98pp | 2.68pp |
+| resize 0.25x | 60.74% | 91.37% | 74.78% | 97.54% | 37.57pp | 6.66pp |
+| noise σ0.02 | 96.59% | 97.63% | 99.60% | 99.74% | 1.73pp | 0.40pp |
+| noise σ0.05 | 88.16% | 96.84% | 96.46% | 99.60% | 10.15pp | 1.20pp |
+| noise σ0.10 | 53.67% | 94.91% | 81.54% | 99.01% | 44.65pp | 3.12pp |
+| colour -20% | 95.25% | 96.95% | 99.39% | 99.63% | 3.07pp | 1.08pp |
+| colour +20% | 95.14% | 96.34% | 99.39% | 99.59% | 3.18pp | 1.69pp |
+| crop 80% | 76.52% | 95.96% | 98.13% | 99.33% | 21.79pp | 2.07pp |
+
+**Headline finding: the clean baseline collapses under degradation; the
+augmented model holds.** At noise σ=0.10 — a level that's barely visible
+to the eye — Experiment A's accuracy falls from 98.32% to 53.67% (a
+44.65-point drop, barely above the 50% chance rate for this binary task),
+while Experiment B falls only to 94.91% (a 3.12-point drop). The same
+pattern repeats under blur (σ=2.0: A collapses to 57.75% vs. B at
+91.77%), resize (0.25x: A at 60.74% vs. B at 91.37%), and centre crop
+(80%: A at 76.52% vs. B at 95.96%). **The trade is a small one:**
+robustness augmentation costs only 0.29 points of clean accuracy
+(98.32% → 98.03%) in exchange for these large robustness gains.
+
 ### Robustness evaluation — Experiment B vs. Experiment C
 
-Source: `results/robustness_comparison.csv`. In that file's `model_a`/
-`model_b` columns, "a" and "b" mean first/second comparison slot, **not**
-Experiment A/B — for this run, slot **a is Experiment B** (robustness
-augmentation) and slot **b is Experiment C** (consistency training). The
-table below is relabeled with the actual experiment names to avoid that
-confusion.
+Source: `results/robustness_comparison_b_vs_c.csv`. In that file's
+`model_a`/`model_b` columns, "a" and "b" mean first/second comparison
+slot, **not** Experiment A/B — for this run, slot **a is Experiment B**
+(robustness augmentation) and slot **b is Experiment C** (consistency
+training). The table below is relabeled with the actual experiment names
+to avoid that confusion.
 
 | Condition | Exp B Acc | Exp C Acc | Exp B AUROC | Exp C AUROC | Exp B drop from clean | Exp C drop from clean |
 |---|---:|---:|---:|---:|---:|---:|
@@ -352,15 +394,22 @@ confusion.
 | colour +20% | 96.34% | 96.54% | 99.59% | 99.58% | 1.69pp | 1.67pp |
 | crop 80% | 95.96% | 96.15% | 99.33% | 99.40% | 2.07pp | 2.06pp |
 
-**Finding, stated plainly: consistency training (C) performed comparably
-to augmentation alone (B) — this is not a clear win.** C was marginally
-better on clean and on mild single-transform conditions (low JPEG
-compression, light noise, colour jitter, crop), and marginally worse under
-heavy single-transform degradation (blur, resize, aggressive JPEG/noise)
-and under every chained transform but one. Every single-condition
-difference between the two is under 1.5 percentage points either way — a
-genuine tie within noise, not evidence the consistency loss achieved its
-intended goal.
+**Finding, stated plainly: adding consistency training on top of
+augmentation does not move the needle.** C was marginally better than B
+on clean and mild single-transform conditions (low JPEG compression,
+light noise, colour jitter, crop), and marginally worse under heavy
+single-transform degradation (blur, resize, aggressive JPEG/noise) and
+under every chained transform but one. Every single-condition difference
+between B and C is under 1.5 percentage points either way — a genuine tie
+within noise, not evidence the consistency loss achieved its intended
+goal.
+
+**Put together with the A-vs-B result above, the full ablation tells one
+story:** almost all of the robustness gain comes from augmentation itself
+(A→B, tens of accuracy points under heavy degradation). Adding the
+consistency penalty on top of that (B→C) adds nothing measurable — C is
+statistically indistinguishable from B across every single-transform
+condition.
 
 **Chained conditions.** Evaluation also covered 5 chained transforms
 beyond the challenge's 15 single conditions, testing whether
@@ -385,15 +434,20 @@ ranges could have produced during training; the other three novel chains
 and still degraded gracefully rather than catastrophically — except for
 the resize+JPEG combination above.
 
-**TODO — the missing piece: Experiment A (the clean baseline) has not
-been evaluated under this robustness grid.** Every comparison above is
-augmentation (B) vs. consistency (C); neither has been benchmarked
-against the un-augmented baseline. Without A's robustness numbers, we
-cannot currently quantify what robustness augmentation itself
-contributed over doing nothing — only that B and C perform similarly to
-*each other* once augmented. Running `evaluate.py --mode robustness`
-with A's checkpoint against either B or C is required before the A/B/C
-ablation in `results/decisions.md` can actually be completed.
+### Data provenance
+
+- Per-condition metrics used in both tables above —
+  `results/robustness_comparison_a_vs_b.csv`,
+  `results/robustness_comparison_b_vs_c.csv`,
+  `results/robustness_metrics_a_b.csv` — are committed to the repo.
+- Per-image predictions (`robustness_predictions.csv`, ~89MB) are
+  **gitignored due to size** and are not in the repo. Full per-image error
+  analysis (which specific images each model gets wrong) would need to be
+  regenerated locally by re-running `evaluate.py`.
+- TODO: `robustness_config.json` (the checkpoint SHA-256 hashes, split,
+  seed, and condition grid `evaluate.py` writes automatically for each
+  run) **has not been committed yet**. Until it is, these numbers aren't
+  yet traceable to a specific checkpoint file with certainty.
 
 TODO: error analysis (which images/generators/conditions each model gets
 wrong) hasn't been done either.
