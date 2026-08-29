@@ -11,6 +11,7 @@ from src.evaluation_conditions import (
     ROBUSTNESS_CONDITIONS,
     EvaluationCondition,
     build_condition_transform,
+    condition_id,
     condition_steps,
     condition_title,
 )
@@ -34,6 +35,19 @@ def test_robustness_conditions_match_the_lead_protocol():
         ("colour", 0.20),
         ("crop", 0.80),
     ]
+
+
+def test_all_fixed_conditions_have_unique_stable_ids():
+    condition_ids = [
+        condition_id(condition)
+        for condition in ALL_FIXED_EVALUATION_CONDITIONS
+    ]
+
+    assert len(condition_ids) == len(set(condition_ids))
+    assert "jpeg_90" in condition_ids
+    assert "jpeg_70" in condition_ids
+    assert "noise_0.1" in condition_ids
+    assert "fixed_repeated_jpeg" in condition_ids
 
 
 def test_noise_is_repeatable_per_image_without_changing_global_rng():

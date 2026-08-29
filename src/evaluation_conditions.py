@@ -121,6 +121,18 @@ def condition_steps(condition: EvaluationCondition) -> tuple[TransformStep, ...]
     return ((condition.name, condition.severity),)
 
 
+def condition_id(condition: EvaluationCondition) -> str:
+    """Return a stable ID that distinguishes every severity and chain."""
+    if condition.name == "clean" or condition.steps:
+        return condition.name
+    if condition.severity is None:
+        raise ValueError(
+            f"condition '{condition.name}' needs a severity or transform steps"
+        )
+    severity = format(condition.severity, "g")
+    return f"{condition.name}_{severity}"
+
+
 def condition_title(condition: EvaluationCondition) -> str:
     """Return a human-readable title suitable for CSV and console output."""
     if condition.title:
