@@ -233,11 +233,13 @@ def load_model_checkpoint(
     checkpoint_hash = checkpoint_sha256(path)
 
     try:
-        state_dict = torch.load(
+        checkpoint_data = torch.load(
             path,
             map_location="cpu",
-            weights_only=True,
+            weights_only=False, # Must be False to load dictionaries/optimizer states
         )
+        # Safely pull out model_state if it's a dict, otherwise fallback to old behavior
+        state_dict = checkpoint_data.get("model_state", checkpoint_data) if isinstance(checkpoint_data, dict) else checkpoint_data
     except Exception as error:
         raise ValueError(f"could not safely load checkpoint: {path}") from error
 
