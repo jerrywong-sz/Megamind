@@ -33,53 +33,72 @@ def process_and_resave_image(img_path, output_dir, relative_path):
     except Exception:
         return None
 
-def build_and_split_manifest(data_dir, dataset_name, generator_name, output_csv):
+def build_and_split_manifest(data_dir, output_dir, dataset_name, generator_name, output_csv):
     records = []
     seen_hashes = set()
     
-    print(f"Crawling {data_dir}...")
-    for label_str in ["REAL", "FAKE"]:
+    print(f"Crawling {data_dir} and standardizing to {output_dir}...")
+    
+    # We now support TAMPERED (label 2.0)
+    for label_str, label_val in [("REAL", 0.0), ("FAKE", 1.0), ("TAMPERED", 2.0)]:
         folder_path = Path(data_dir) / label_str
-        label_val = 0.0 if label_str == "REAL" else 1.0 
-        
+        if not folder_path.exists():
+            continue
+            
         for img_path in folder_path.rglob("*.*"):
             if not img_path.is_file(): continue
             
-            meta = get_image_meta(img_path)
+            relative_path = img_path.relative_to(Path(data_dir))
+            
+            meta = process_and_resave_image(img_path, output_dir, relative_path)
             if meta is None or meta["hash"] in seen_hashes:
                 continue
             seen_hashes.add(meta["hash"])
             
-            # Convert /content/images/CIFAKE/train/REAL/img.jpg to train/REAL/img.jpg
-            relative_path = str(img_path.relative_to(Path(data_dir).parent))
+            # Enforce the Tampered Holdout Rule (PDF Page 4)
+            split_override = "bonus" if label_val == 2.0 else None
 
             records.append({
-                "image_path": relative_path, "label": label_val, 
+                "image_path": meta["new_path"], "label": label_val, 
                 "dataset": dataset_name, "generator": generator_name,
-                "width": meta["width"], "height": meta["height"], "format": meta["format"]
+                "width": meta["width"], "height": meta["height"], 
+                "format": meta["format"], "split_override": split_override
             })
 
     df = pd.DataFrame(records)
     
-    # Balance classes 50/50
-    min_count = df['label'].value_counts().min()
+    # Balance Binary Classes (Real vs Fake)
+    df_binary = df[df['label'].isin([0.0, 1.0])]
+    min_count = df_binary['label'].value_counts().min()
+    
     df_balanced = pd.concat([
-        df[df['label'] == 0.0].sample(n=min_count, random_state=42),
-        df[df['label'] == 1.0].sample(n=min_count, random_state=42)
+        df_binary[df_binary['label'] == 0.0].sample(n=min_count, random_state=42),
+        df_binary[df_binary['label'] == 1.0].sample(n=min_count, random_state=42)
     ]).sample(frac=1, random_state=42).reset_index(drop=True)
 
-    # 70/15/15 Split
+    # Split 70/15/15 for Binary
     train, val, test = np.split(df_balanced, [int(.7*len(df_balanced)), int(.85*len(df_balanced))])
     train['split'], val['split'], test['split'] = 'train', 'val', 'test'
     
-    final_manifest = pd.concat([train, val, test])
+    # Merge back the Tampered (Bonus) data
+    df_tampered = df[df['label'] == 2.0].copy()
+    if not df_tampered.empty:
+        df_tampered['split'] = df_tampered['split_override']
+    
+    final_manifest = pd.concat([train, val, test, df_tampered]).drop(columns=['split_override'])
     final_manifest.to_csv(output_csv, index=False)
-    print(f"Success! Manifest saved to {output_csv} with {len(final_manifest)} images.")
+    print(f"Success! Manifest saved to {output_csv} with {len(final_manifest)} standardized images.")
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data_dir", required=True, help="Original downloaded images")
+    parser.add_argument("--output_dir", required=True, help="Where to save standardized JPEGs")
+    parser.add_argument("--dataset_name", required=True)
+    parser.add_argument("--generator", required=True)
+    parser.add_argument("--output_csv", required=True)
+    args = parser.parse_args()
+    
     build_and_split_manifest(
-        data_dir="/content/images/CIFAKE/train", 
-        dataset_name="CIFAKE", 
-        generator_name="SD1.4", 
-        output_csv="/content/images/cifake_manifest.csv"
+        args.data_dir, args.output_dir, 
+        args.dataset_name, args.generator, args.output_csv
     )
