@@ -6,9 +6,13 @@ import torch
 from PIL import Image
 
 from src.evaluation_conditions import (
+    ALL_FIXED_EVALUATION_CONDITIONS,
+    FIXED_CHAIN_CONDITIONS,
     ROBUSTNESS_CONDITIONS,
     EvaluationCondition,
     build_condition_transform,
+    condition_steps,
+    condition_title,
 )
 
 
@@ -49,3 +53,45 @@ def test_noise_is_repeatable_per_image_without_changing_global_rng():
     assert first.tobytes() == second.tobytes()
     assert first.tobytes() != another_image.tobytes()
     assert torch.equal(actual_next_random_value, expected_next_random_value)
+
+
+def test_fixed_chains_have_unique_explicit_titles_and_traceable_steps():
+    assert len(FIXED_CHAIN_CONDITIONS) == 5
+    assert len({item.name for item in FIXED_CHAIN_CONDITIONS}) == 5
+    assert all(item.condition_kind == "fixed_chain" for item in FIXED_CHAIN_CONDITIONS)
+    assert all(condition_title(item).startswith("Fixed chain") for item in FIXED_CHAIN_CONDITIONS)
+    assert all(len(condition_steps(item)) >= 2 for item in FIXED_CHAIN_CONDITIONS)
+    assert ALL_FIXED_EVALUATION_CONDITIONS[-5:] == FIXED_CHAIN_CONDITIONS
+
+
+def test_fixed_chain_applies_steps_in_order_and_restores_rgb_image():
+    image = Image.new("RGB", (32, 32), (120, 80, 200))
+    condition = EvaluationCondition(
+        name="fixed_chain_test",
+        severity=None,
+        title="Fixed chain test",
+        steps=(("resize", 0.5), ("jpeg", 70)),
+        condition_kind="fixed_chain",
+    )
+    transform = build_condition_transform(condition, base_seed=42)
+
+    transformed = transform(image, "train/FAKE/example.jpg")
+
+    assert transformed.mode == "RGB"
+    assert transformed.size == image.size
+    assert transformed.tobytes() != image.tobytes()
+
+
+def test_repeated_jpeg_chain_is_outside_distinct_training_sampler():
+    repeated_jpeg = next(
+        item
+        for item in FIXED_CHAIN_CONDITIONS
+        if item.name == "fixed_repeated_jpeg"
+    )
+
+    assert repeated_jpeg.possible_in_b_c_training_sampler is False
+    assert condition_steps(repeated_jpeg) == (
+        ("jpeg", 90),
+        ("jpeg", 70),
+        ("jpeg", 50),
+    )
