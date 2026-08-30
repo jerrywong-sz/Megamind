@@ -135,6 +135,8 @@ def test_fit_saves_best_checkpoint(tmp_path):
     assert "model_state" in checkpoint
     assert "optimizer_state" in checkpoint
     assert "epoch" in checkpoint
+    assert "architecture" in checkpoint
+    assert checkpoint["architecture"] == "efficientnet_b0"
 
     loaded_model.load_state_dict(
         checkpoint["model_state"]

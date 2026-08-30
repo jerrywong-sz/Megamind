@@ -21,7 +21,8 @@ IMAGENET_STD = [0.229, 0.224, 0.225]
 def get_eval_transform() -> transforms.Compose:
     """Build the deterministic evaluation/inference transform."""
     return transforms.Compose([
-        transforms.Resize((256, 256)),
+        # Change from Resize((256, 256)) to Resize(256)
+        transforms.Resize(256),
         transforms.CenterCrop(224),
         transforms.ToTensor(),
         transforms.Normalize(
@@ -185,8 +186,9 @@ def get_evaluation_dataloader(
     fixed. Training rows are deliberately rejected here so they are not
     accidentally presented as an unbiased result.
     """
-    if split not in {"val", "test"}:
-        raise ValueError("evaluation split must be 'val' or 'test'")
+    # Allow "bonus" alongside "val" and "test"
+    if split not in {"val", "test", "bonus"}:
+        raise ValueError("evaluation split must be 'val', 'test', or 'bonus'")
     if batch_size <= 0:
         raise ValueError("batch_size must be positive")
     if num_workers < 0:

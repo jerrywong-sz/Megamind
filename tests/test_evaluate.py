@@ -127,7 +127,7 @@ def test_checkpoint_loader_restores_weights_and_records_hash(tmp_path, monkeypat
 
     checkpoint_path = tmp_path / "model.pt"
     torch.save(original_model.state_dict(), checkpoint_path)
-    monkeypatch.setattr(evaluate, "build_model", lambda pretrained: TinyCheckpointModel())
+    monkeypatch.setattr(evaluate, "build_model", lambda pretrained, architecture="efficientnet_b0": TinyCheckpointModel())
 
     loaded_model, checkpoint_hash = load_model_checkpoint(
         checkpoint_path,
@@ -139,10 +139,53 @@ def test_checkpoint_loader_restores_weights_and_records_hash(tmp_path, monkeypat
     assert len(checkpoint_hash) == 64
 
 
+
+
+def test_checkpoint_loader_uses_manual_architecture_for_legacy_checkpoint(
+    tmp_path,
+    monkeypatch,
+):
+    original_model = TinyCheckpointModel()
+
+    checkpoint_path = tmp_path / "legacy-convnext.pt"
+
+    torch.save(
+        original_model.state_dict(),
+        checkpoint_path,
+    )
+
+    requested = {}
+
+    def fake_build_model(
+        pretrained,
+        architecture="efficientnet_b0",
+    ):
+        requested["architecture"] = architecture
+        return TinyCheckpointModel()
+
+    monkeypatch.setattr(
+        evaluate,
+        "build_model",
+        fake_build_model,
+    )
+
+    loaded_model, _ = load_model_checkpoint(
+        checkpoint_path,
+        torch.device("cpu"),
+        architecture="convnext_tiny",
+    )
+
+    assert requested["architecture"] == "convnext_tiny"
+    assert isinstance(
+        loaded_model,
+        TinyCheckpointModel,
+    )
+
+
 def test_checkpoint_loader_rejects_incompatible_weights(tmp_path, monkeypatch):
     checkpoint_path = tmp_path / "wrong.pt"
     torch.save({"unexpected.weight": torch.ones(1)}, checkpoint_path)
-    monkeypatch.setattr(evaluate, "build_model", lambda pretrained: TinyCheckpointModel())
+    monkeypatch.setattr(evaluate, "build_model", lambda pretrained, architecture="efficientnet_b0": TinyCheckpointModel())
 
     with pytest.raises(ValueError, match="does not match"):
         load_model_checkpoint(checkpoint_path, torch.device("cpu"))
@@ -178,7 +221,11 @@ def test_clean_comparison_uses_same_rows_and_writes_outputs(tmp_path, monkeypatc
     data_root, manifest_path = _write_evaluation_fixture(tmp_path)
     output_dir = tmp_path / "results"
 
-    def fake_checkpoint_loader(checkpoint_path, device):
+    def fake_checkpoint_loader(
+        checkpoint_path,
+        device,
+        architecture=None,
+    ):
         if Path(checkpoint_path).name == "a.pt":
             return FixedLogitModel([-2.0, 2.0, 2.0, -2.0]), "a" * 64
         return FixedLogitModel([-2.0, -2.0, 2.0, 2.0]), "b" * 64
@@ -250,7 +297,11 @@ def test_robustness_runner_writes_each_condition_for_both_models(
         EvaluationCondition("noise", 0.02),
     )
 
-    def fake_checkpoint_loader(checkpoint_path, device):
+    def fake_checkpoint_loader(
+        checkpoint_path,
+        device,
+        architecture=None,
+    ):
         if Path(checkpoint_path).name == "a.pt":
             return FixedLogitModel([-2.0, 2.0, 2.0, -2.0]), "a" * 64
         return FixedLogitModel([-2.0, -2.0, 2.0, 2.0]), "b" * 64
@@ -300,7 +351,11 @@ def test_robustness_runner_preserves_custom_b_and_c_model_ids(
     output_dir = tmp_path / "b-vs-c-results"
     conditions = (CLEAN_CONDITION, EvaluationCondition("jpeg", 30))
 
-    def fake_checkpoint_loader(checkpoint_path, device):
+    def fake_checkpoint_loader(
+        checkpoint_path,
+        device,
+        architecture=None,
+    ):
         if Path(checkpoint_path).name == "b.pt":
             return FixedLogitModel([-2.0, 2.0, 2.0, -2.0]), "b" * 64
         return FixedLogitModel([-2.0, -2.0, 2.0, 2.0]), "c" * 64
