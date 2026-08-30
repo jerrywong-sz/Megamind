@@ -231,3 +231,4 @@ results/**/robustness_predictions.csv
 results/**/clean_predictions.csv
 results/robustness_predictions.csv
 results/clean_predictions.csv
+predictions.json
