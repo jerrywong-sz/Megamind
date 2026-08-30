@@ -67,7 +67,10 @@ def test_evaluation_dataloader_selects_split_in_manifest_order(tmp_path):
 def test_evaluation_dataloader_rejects_training_split(tmp_path):
     data_root, manifest_path = _make_manifest(tmp_path)
 
-    with pytest.raises(ValueError, match="'val' or 'test'"):
+    with pytest.raises(
+        ValueError,
+        match="'val', 'test', or 'bonus'",
+    ):
         get_evaluation_dataloader(
             data_root=str(data_root),
             manifest_path=str(manifest_path),
