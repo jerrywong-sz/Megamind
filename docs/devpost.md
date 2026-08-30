@@ -187,6 +187,12 @@ We would rather state these than have a judge find them.
    0.20 and 0.80. This is expected from a single-logit network trained to
    near-zero loss, and is only a problem for the baseline, whose confidence is
    also poorly calibrated.
+8. **The tampered holdout has never been analysed.** Tampered SID_Set images are
+   correctly routed to a dedicated `bonus` split and kept out of binary training
+   and evaluation, but no evaluation entry point currently exposes that split
+   (`--split` accepts only `val` or `test`), and labels are emitted as float32
+   for `BCEWithLogitsLoss`, so a 3-class row would need explicit handling. The
+   quarantine works; the analysis it enables is future work.
 
 **With more time, in priority order:** finish training on SID_Set for
 high-resolution and second-generator coverage; run the held-out WildFake
