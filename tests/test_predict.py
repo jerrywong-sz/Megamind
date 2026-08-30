@@ -28,6 +28,22 @@ def make_test_images(root: Path) -> int:
     return 4
 
 
+def run_predict(input_dir: Path, output_path: Path, *extra_args: str):
+    """Run predict.py as a subprocess, exactly as a judge would invoke it."""
+    return subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "predict.py"),
+            "--input_dir", str(input_dir),
+            "--output", str(output_path),
+            *extra_args,
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_predict_runs_end_to_end_with_random_fallback(tmp_path):
     input_dir = tmp_path / "images"
     input_dir.mkdir()
@@ -35,17 +51,7 @@ def test_predict_runs_end_to_end_with_random_fallback(tmp_path):
 
     output_path = tmp_path / "preds.json"
 
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(REPO_ROOT / "predict.py"),
-            "--input_dir", str(input_dir),
-            "--output", str(output_path),
-        ],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-    )
+    result = run_predict(input_dir, output_path)
 
     assert result.returncode == 0, f"predict.py failed:\n{result.stderr}"
     assert output_path.exists(), "predict.py did not write an output file"
@@ -57,10 +63,51 @@ def test_predict_runs_end_to_end_with_random_fallback(tmp_path):
     assert len(predictions) == num_images
 
     for row in predictions:
-        assert "image_path" in row
-        assert "pred" in row
+        # The submission format is exactly these two keys -- no more, no less.
+        # An extra key could fail a strict schema check during judging.
+        assert set(row.keys()) == {"image_path", "pred"}
         assert isinstance(row["pred"], float)
         assert 0.0 <= row["pred"] <= 1.0
+
+
+def test_predict_include_label_flag_adds_predicted_label(tmp_path):
+    input_dir = tmp_path / "images"
+    input_dir.mkdir()
+    num_images = make_test_images(input_dir)
+
+    output_path = tmp_path / "preds.json"
+
+    result = run_predict(input_dir, output_path, "--include-label")
+
+    assert result.returncode == 0, f"predict.py failed:\n{result.stderr}"
+
+    with open(output_path) as f:
+        predictions = json.load(f)
+
+    assert len(predictions) == num_images
+
+    for row in predictions:
+        assert set(row.keys()) == {"image_path", "pred", "predicted_label"}
+        assert row["predicted_label"] in (0, 1)
+
+
+def test_predict_include_label_respects_threshold(tmp_path):
+    """A threshold of 0 labels everything 1; a threshold above 1 labels everything 0."""
+    input_dir = tmp_path / "images"
+    input_dir.mkdir()
+    make_test_images(input_dir)
+
+    all_positive = tmp_path / "all_positive.json"
+    result = run_predict(input_dir, all_positive, "--include-label", "--threshold", "0.0")
+    assert result.returncode == 0, f"predict.py failed:\n{result.stderr}"
+    with open(all_positive) as f:
+        assert all(row["predicted_label"] == 1 for row in json.load(f))
+
+    all_negative = tmp_path / "all_negative.json"
+    result = run_predict(input_dir, all_negative, "--include-label", "--threshold", "1.1")
+    assert result.returncode == 0, f"predict.py failed:\n{result.stderr}"
+    with open(all_negative) as f:
+        assert all(row["predicted_label"] == 0 for row in json.load(f))
 
 
 def test_predict_handles_empty_input_dir(tmp_path):
@@ -68,17 +115,7 @@ def test_predict_handles_empty_input_dir(tmp_path):
     input_dir.mkdir()
     output_path = tmp_path / "preds.json"
 
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(REPO_ROOT / "predict.py"),
-            "--input_dir", str(input_dir),
-            "--output", str(output_path),
-        ],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-    )
+    result = run_predict(input_dir, output_path)
 
     assert result.returncode == 0, f"predict.py failed:\n{result.stderr}"
 

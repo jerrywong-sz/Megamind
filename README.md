@@ -53,6 +53,12 @@ Options:
   **not a real detector output**
 - `--output` (required) — path to write the output JSON to
 - `--batch_size` (optional, default `32`) — images per inference batch
+- `--include-label` (optional, off by default) — adds a `predicted_label`
+  key (`0`/`1`) to each row. **Leave this off for submission** — the
+  required output format is exactly `image_path` + `pred`
+- `--threshold` (optional, default `0.5`) — probability at or above which
+  an image is labelled AI-generated. Only affects `predicted_label`, so it
+  does nothing unless `--include-label` is also passed
 
 Example output (`results/preds.json`):
 
@@ -93,8 +99,10 @@ above, then keep it active for every command below.
 
 ### 3. Expected raw directory layout
 
-`src/build_manifest.py` expects each dataset's raw images split into
-`REAL/` and `FAKE/` subfolders (searched recursively), e.g.:
+`src/build_manifest.py` looks for up to three subfolders under the
+directory you point it at: `REAL/`, `FAKE/`, and `TAMPERED/` (each
+searched recursively). A subfolder that doesn't exist is skipped, so a
+dataset without tampered images works with just `REAL/`/`FAKE/`:
 
 ```
 data/
@@ -109,55 +117,127 @@ data/
       ...
     FAKE/
       ...
+    TAMPERED/          # SID_Set only -- held out, see step 4
+      ...
 ```
+
+Labels are assigned from the folder name: `REAL` → `0.0`, `FAKE` → `1.0`,
+`TAMPERED` → `2.0`.
 
 ### 4. Build the manifest CSV
 
-**`src/build_manifest.py` currently hardcodes Colab paths in its
-`if __name__ == "__main__"` block instead of accepting CLI arguments** —
-running `python src/build_manifest.py` as-is will try to read
-`/content/images/...` and fail on a local machine. Call the function
-directly with your own paths instead:
+> ⚠️ **Known issue — this step does not currently run on `main`.**
+> `src/build_manifest.py` raises `IndexError` at the 70/15/15 split
+> (`np.split` returns plain numpy arrays rather than DataFrames with the
+> installed pandas/numpy, so `train['split'] = ...` fails). Calling
+> `build_and_split_manifest()` as a function fails earlier still, with
+> `NameError: name 'args' is not defined`, because the body reads the
+> module-level `args` for `--force_split` instead of taking it as a
+> parameter. Both are being fixed — until then, treat the commands below
+> as the intended interface rather than something that completes today.
+
+`src/build_manifest.py` has a five-argument CLI (note: flags use
+underscores, unlike `train.py`/`evaluate.py` which use hyphens):
 
 ```bash
-python -c "from src.build_manifest import build_and_split_manifest; build_and_split_manifest('data/CIFAKE/train', 'CIFAKE', 'SD1.4', 'data/cifake_manifest.csv')"
+python src/build_manifest.py --data_dir <raw_dataset_dir> --output_dir <standardized_output_dir> --dataset_name <name> --generator <name> --output_csv <manifest.csv>
 ```
 
 (identical command on Windows PowerShell and Mac/Linux)
 
-This hashes and de-duplicates images, balances classes 50/50, and writes a
-70/15/15 train/val/test split into the CSV. Run it once per dataset. TODO:
-there's no built-in way yet to merge multiple datasets' manifests into one
-combined CSV for `get_dataloaders()` — do that manually (e.g.
-`pandas.concat`) until that's added.
+Example for CIFAKE:
+
+```bash
+python src/build_manifest.py --data_dir data/CIFAKE/train --output_dir data/CIFAKE_standardized --dataset_name CIFAKE --generator SD1.4 --output_csv data/cifake_manifest.csv
+```
+
+Arguments:
+
+- `--data_dir` (required) — the raw downloaded images (the folder holding
+  `REAL/`/`FAKE/`/`TAMPERED/`)
+- `--output_dir` (required) — where standardized JPEGs are written
+- `--dataset_name` (required) — recorded in the manifest's `dataset` column
+- `--generator` (required) — recorded in the manifest's `generator` column
+- `--output_csv` (required) — path for the manifest CSV
+- `--force_split` (optional, one of `train`/`val`/`test`) — force every
+  binary row into a single split. Intended for held-out sets such as
+  WildFake, so they can never leak into training
+
+What it does:
+
+- Verifies each image isn't corrupted, hashes it (SHA-256) to
+  de-duplicate, converts to RGB, and re-saves it as a standardized JPEG
+  (quality 95) under `--output_dir`. This neutralizes format bias — see
+  [results/decisions.md](results/decisions.md).
+- Balances `REAL`/`FAKE` 50/50 and splits them 70/15/15 into
+  train/val/test.
+- Holds `TAMPERED` rows out of that balancing and split entirely, giving
+  them their own split value.
+- Writes `image_path` as the path of the **re-saved** file relative to
+  `--output_dir`.
+
+Run once per dataset. TODO: there's still no built-in way to merge
+multiple datasets' manifests into one combined CSV for
+`get_dataloaders()` — do that manually (e.g. `pandas.concat`) until
+that's added.
 
 ### 5. Train the three experiments
 
-TODO — `train.py` is still empty (open as PR #2, not yet merged) and
-`configs/` has no committed config yet, so there is no real training
-command to give here. Once it exists, it should be wired to:
+`train.py` trains one experiment per run, selected by config file:
 
-- **Experiment A (clean baseline):** base preprocessing only —
-  `get_train_transform()` in [src/data.py](src/data.py) (`Resize(256) →
-  RandomCrop(224) → RandomHorizontalFlip → Normalize`; its docstring
-  already labels it "Experiment A"), no robustness damage applied.
-- **Experiment B (augmented):** same base preprocessing, plus
-  `random_transform()` from
-  [src/augmentations.py](src/augmentations.py), which applies 0–3 of
-  {JPEG, blur, resize, noise, colour, crop} per image with randomized
-  parameters.
-- **Experiment C (consistency):** same as B, plus a consistency penalty
-  between clean and damaged views of the same image. TODO: the loss isn't
-  implemented yet — `src/losses.py` is currently empty.
-
-Backbone (`build_model()`), seed, epochs, batch size, learning rate, and
-weight decay must be held identical across A/B/C so the ablation isolates
-the training method rather than confounding hyperparameters. TODO: fill in
-the actual values and command once `train.py` exists, e.g.:
-
+```bash
+python train.py --config <config.yaml> --manifest <manifest.csv> --data-root <dataset_root>
 ```
-python train.py --config configs/experiment_a.yaml   # TODO: not real yet
+
+- `--config` (required) — experiment YAML from `configs/`
+- `--manifest` (required) — the CSV manifest built in step 4
+- `--data-root` (required) — root directory the manifest's `image_path`
+  values are relative to (note: hyphen, unlike step 4's underscore flags)
+
+The three experiments:
+
+```bash
+# A -- clean baseline
+python train.py --config configs/baseline.yaml --manifest <manifest.csv> --data-root <dataset_root>
+
+# B -- robustness augmentation
+python train.py --config configs/robustness.yaml --manifest <manifest.csv> --data-root <dataset_root>
+
+# C -- consistency training (see known issue below)
+python train.py --config configs/consistency.yaml --manifest <manifest.csv> --data-root <dataset_root>
 ```
+
+> ⚠️ **Known issue — Experiment C does not currently run.** The training
+> loop in `train.py` handles `train_mode: consistency`, but
+> `get_dataloaders()` in [src/data.py](src/data.py) accepts only `clean`
+> or `robust` and raises `ValueError: Unknown train_mode 'consistency'`
+> before training starts. A and B run fine. The C results reported below
+> came from a separate run, not from this command as written.
+
+- **Experiment A** ([configs/baseline.yaml](configs/baseline.yaml)) — base
+  preprocessing only, via `get_train_transform()` in
+  [src/data.py](src/data.py) (`Resize(256) → CenterCrop(224) →
+  RandomHorizontalFlip → Normalize`). No robustness damage.
+- **Experiment B** ([configs/robustness.yaml](configs/robustness.yaml),
+  `train_mode: robust`) — same base preprocessing plus `random_transform()`
+  from [src/augmentations.py](src/augmentations.py), applying 0–3 of
+  {JPEG, blur, resize, noise, colour, crop} per image at random strengths.
+- **Experiment C** ([configs/consistency.yaml](configs/consistency.yaml),
+  `train_mode: consistency`) — same augmentation as B, plus a consistency
+  penalty between a clean and a damaged view of each image, implemented as
+  `robustness_loss()` in [src/losses.py](src/losses.py). Weighted by
+  `lambda_weight` (currently `0.5`).
+
+All three configs hold the ablation variables identical — seed `42`,
+`pretrained: true`, image size `224`, batch size `32`, `5` epochs, lr
+`1e-4`, weight decay `1e-4`, AMP on — so the only thing that varies is the
+training method. Checkpoints are written to `checkpoint_dir`/`checkpoint_name`
+(`checkpoints/baseline.pt`, `robustness.pt`, `consistency.pt`); `checkpoints/`
+and `*.pt` are gitignored.
+
+Checkpoints are saved as a dict (`{epoch, model_state, optimizer_state}`)
+for resumability. `predict.py` and `evaluate.py` both accept either that
+form or a bare state dict.
 
 ### 6. Evaluate against the challenge transform grid
 
@@ -323,6 +403,38 @@ Source: [results/experiment_a_summary.md](results/experiment_a_summary.md),
 [results/experiment_b_summary.md](results/experiment_b_summary.md).
 Experiment B gives up only 0.29 points of clean accuracy relative to A —
 expected, since B optimizes for robustness rather than clean-set accuracy.
+
+Full clean-validation breakdown, from `results/clean_metrics_a_b.csv`
+(14,724 validation images for both):
+
+| Metric | Experiment A | Experiment B |
+|---|---:|---:|
+| Precision | 98.09% | 97.42% |
+| Recall | 98.59% | 98.73% |
+| F1 | 98.34% | 98.07% |
+| AUROC | 99.84% | 99.80% |
+| False positive rate | 1.97% | 2.69% |
+| False negative rate | 1.41% | 1.27% |
+| Brier score | 0.0133 | 0.0153 |
+
+Confusion-matrix counts (out of 14,724): A — 7,118 true negatives, 143
+false positives, 105 false negatives, 7,358 true positives. B — 7,066 true
+negatives, **195 false positives**, **95 false negatives**, 7,368 true
+positives.
+
+**Observed trade-off:** Experiment B has more false positives than A (195
+vs. 143) but fewer false negatives (95 vs. 105) — robustness augmentation
+shifted the model's decision boundary slightly toward calling images
+AI-generated. False positive rate rose from 1.97% (A) to 2.69% (B). This
+is worth tracking rather than dismissing: the challenge specifically warns
+against false positives on genuine photographs, and this shift moves in
+that direction, even though it's a small one at this stage.
+
+`clean_metrics_a_b.csv` also records both checkpoints' SHA-256 hashes
+(`checkpoint_hash` column), which partially addresses the
+`robustness_config.json` traceability TODO below — the clean-evaluation
+checkpoints are identifiable now, though the robustness-grid run still
+isn't.
 
 ### Robustness evaluation — Experiment A vs. Experiment B
 
