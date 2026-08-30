@@ -1,11 +1,13 @@
-"""Compare three named checkpoints with seeded per-image random chains."""
+"""Compare two or more named checkpoints with random three-transform chains.
+
+The module name and legacy A/B/C command remain for notebook compatibility;
+new runs use the shared variable-length model interface.
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
-import re
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -24,6 +26,17 @@ from evaluate_fixed_robustness_abc import (
 )
 from src.data import get_evaluation_dataloader
 from src.metrics import compute_binary_metrics
+from src.evaluation_models import (
+    EvaluationModelSpec,
+    add_variable_model_arguments,
+    build_model_specs,
+    comparison_title,
+    model_pairs,
+    model_token,
+    model_titles,
+    validate_model_specs,
+    variable_model_specs_from_args,
+)
 from src.random_chain_conditions import (
     RANDOM_STANDARD_3_CHAIN_LENGTH,
     RANDOM_STANDARD_3_PARAMETER_GRID,
@@ -54,16 +67,6 @@ RANDOM_ABC_FILENAMES = {
     "errors": "random_standard_3__false_positives_and_false_negatives.csv",
     "config": "random_standard_3__run_config.json",
 }
-MODEL_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_]*$")
-
-
-@dataclass(frozen=True)
-class ModelSpec:
-    model_id: str
-    model_title: str
-    checkpoint_path: Path
-
-
 def _model_specs(
     checkpoint_a_baseline: str | Path,
     checkpoint_b_robustness: str | Path,
@@ -75,72 +78,51 @@ def _model_specs(
     model_b_title: str = MODEL_TITLES[MODEL_B_ID],
     model_c_id: str = MODEL_C_ID,
     model_c_title: str = MODEL_TITLES[MODEL_C_ID],
-) -> tuple[ModelSpec, ...]:
-    specs = (
-        ModelSpec(
-            model_a_id,
-            model_a_title,
-            Path(checkpoint_a_baseline),
+) -> tuple[EvaluationModelSpec, ...]:
+    return build_model_specs(
+        checkpoints=(
+            checkpoint_a_baseline,
+            checkpoint_b_robustness,
+            checkpoint_c_consistency,
         ),
-        ModelSpec(
-            model_b_id,
-            model_b_title,
-            Path(checkpoint_b_robustness),
-        ),
-        ModelSpec(
-            model_c_id,
-            model_c_title,
-            Path(checkpoint_c_consistency),
-        ),
-    )
-    model_ids = [spec.model_id for spec in specs]
-    if len(model_ids) != len(set(model_ids)):
-        raise ValueError("model IDs must be unique")
-    for spec in specs:
-        if not MODEL_ID_PATTERN.fullmatch(spec.model_id):
-            raise ValueError(
-                "model IDs must use lowercase letters, numbers, and underscores"
-            )
-        if not spec.model_title.strip():
-            raise ValueError("model titles must not be empty")
-    return specs
-
-
-def _evaluation_title(specs: Sequence[ModelSpec]) -> str:
-    return "Random standard-3 robustness evaluation — " + " vs ".join(
-        spec.model_title for spec in specs
+        model_ids=(model_a_id, model_b_id, model_c_id),
+        model_titles=(model_a_title, model_b_title, model_c_title),
     )
 
 
-def _output_filenames(specs: Sequence[ModelSpec]) -> dict[str, str]:
+def _evaluation_title(specs: Sequence[EvaluationModelSpec]) -> str:
+    return comparison_title("Random standard-3 robustness evaluation", specs)
+
+
+def _output_filenames(
+    specs: Sequence[EvaluationModelSpec],
+) -> dict[str, str]:
     if tuple(spec.model_id for spec in specs) == MODEL_IDS:
         return dict(RANDOM_ABC_FILENAMES)
 
-    model_token = "_vs_".join(spec.model_id for spec in specs)
-    first_id, second_id, third_id = (
-        spec.model_id for spec in specs
-    )
-    return {
+    token = model_token(specs)
+    filenames = {
         "predictions": (
-            f"random_standard_3__{model_token}__per_image_predictions.csv"
+            f"random_standard_3__{token}__per_image_predictions.csv"
         ),
         "assignments": "random_standard_3__per_image_chain_assignments.csv",
         "clean_predictions": (
-            f"random_standard_3__{model_token}__clean_predictions.csv"
+            f"random_standard_3__{token}__clean_predictions.csv"
         ),
         "trial_metrics": (
-            f"random_standard_3__{model_token}__trial_metrics.csv"
+            f"random_standard_3__{token}__trial_metrics.csv"
         ),
-        "overall": f"random_standard_3__{model_token}__overall_summary.csv",
-        "headline": f"random_standard_3__{model_token}__headline.csv",
-        "a_vs_b": f"random_standard_3__{first_id}_vs_{second_id}.csv",
-        "b_vs_c": f"random_standard_3__{second_id}_vs_{third_id}.csv",
-        "a_vs_c": f"random_standard_3__{first_id}_vs_{third_id}.csv",
+        "overall": f"random_standard_3__{token}__overall_summary.csv",
+        "headline": f"random_standard_3__{token}__headline.csv",
         "patterns": "random_standard_3__chain_pattern_breakdown.csv",
         "inclusion": "random_standard_3__transform_inclusion_breakdown.csv",
         "errors": "random_standard_3__false_positives_and_false_negatives.csv",
         "config": "random_standard_3__run_config.json",
     }
+    for reference_spec, candidate_spec in model_pairs(specs):
+        pair_key = f"{reference_spec.model_id}_vs_{candidate_spec.model_id}"
+        filenames[pair_key] = f"random_standard_3__{pair_key}.csv"
+    return filenames
 
 
 def _winner(values: dict[str, float], *, higher_is_better: bool) -> str:
@@ -236,6 +218,7 @@ def _metric_row(
     dataset_id: str,
     model_id: str,
     model_title: str,
+    architecture_override: str,
     checkpoint_hash: str,
     scope: str,
     trial_index: int | None,
@@ -252,6 +235,7 @@ def _metric_row(
         "trial_seed": trial_seed,
         "model_id": model_id,
         "model_title": model_title,
+        "architecture_override": architecture_override,
         "checkpoint_hash": checkpoint_hash,
         **metrics,
     }
@@ -264,7 +248,7 @@ def _overall_summary(
     trial_metrics: pd.DataFrame,
     predictions: pd.DataFrame,
     checkpoint_hashes: dict[str, str],
-    specs: Sequence[ModelSpec],
+    specs: Sequence[EvaluationModelSpec],
     evaluation_title: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     clean_by_model = {row["model_id"]: row for row in clean_metric_rows}
@@ -282,6 +266,7 @@ def _overall_summary(
             dataset_id=dataset_id,
             model_id=model_id,
             model_title=spec.model_title,
+            architecture_override=spec.architecture or "auto",
             checkpoint_hash=checkpoint_hashes[model_id],
             scope="pooled_random_trials",
             trial_index=None,
@@ -298,6 +283,7 @@ def _overall_summary(
             "random_policy": RANDOM_STANDARD_3_POLICY,
             "model_id": model_id,
             "model_title": spec.model_title,
+            "architecture_override": spec.architecture or "auto",
             "checkpoint_hash": checkpoint_hashes[model_id],
             "num_trials": int(model_trials["trial_seed"].nunique()),
             "num_unique_images": int(model_predictions["image_path"].nunique()),
@@ -515,14 +501,12 @@ def _headline_table(
     return pd.DataFrame([row])
 
 
-def run_random_standard_3_abc_evaluation(
+def run_random_standard_3_evaluation(
     *,
     dataset_id: str,
     data_root: str | Path,
     manifest_path: str | Path,
-    checkpoint_a_baseline: str | Path,
-    checkpoint_b_robustness: str | Path,
-    checkpoint_c_consistency: str | Path,
+    model_specs: Sequence[EvaluationModelSpec],
     output_dir: str | Path,
     split: str = "val",
     threshold: float = 0.5,
@@ -530,14 +514,9 @@ def run_random_standard_3_abc_evaluation(
     num_workers: int = 2,
     device: torch.device | None = None,
     trial_seeds: Sequence[int] = DEFAULT_TRIAL_SEEDS,
-    model_a_id: str = MODEL_A_ID,
-    model_a_title: str = MODEL_TITLES[MODEL_A_ID],
-    model_b_id: str = MODEL_B_ID,
-    model_b_title: str = MODEL_TITLES[MODEL_B_ID],
-    model_c_id: str = MODEL_C_ID,
-    model_c_title: str = MODEL_TITLES[MODEL_C_ID],
 ) -> dict[str, pd.DataFrame]:
-    """Run clean plus five seeded random-standard-3 A/B/C trials."""
+    """Run clean plus seeded random-standard-3 trials for 2+ models."""
+    specs = validate_model_specs(model_specs)
     if not dataset_id.strip():
         raise ValueError("dataset_id must not be empty")
     if not 0.0 <= threshold <= 1.0:
@@ -548,36 +527,30 @@ def run_random_standard_3_abc_evaluation(
         raise ValueError("trial seeds must be unique")
 
     evaluation_device = device or resolve_device("auto")
-    specs = _model_specs(
-        checkpoint_a_baseline,
-        checkpoint_b_robustness,
-        checkpoint_c_consistency,
-        model_a_id=model_a_id,
-        model_a_title=model_a_title,
-        model_b_id=model_b_id,
-        model_b_title=model_b_title,
-        model_c_id=model_c_id,
-        model_c_title=model_c_title,
-    )
     evaluation_title = _evaluation_title(specs)
-    model_titles = {
-        spec.model_id: spec.model_title
-        for spec in specs
-    }
+    title_by_id = model_titles(specs)
     output_filenames = _output_filenames(specs)
-    loaded_models: list[tuple[ModelSpec, nn.Module, str]] = []
+    loaded_models: list[tuple[EvaluationModelSpec, nn.Module, str]] = []
     checkpoint_records = []
     checkpoint_hashes = {}
     for spec in specs:
-        model, checkpoint_hash = load_model_checkpoint(
-            spec.checkpoint_path,
-            evaluation_device,
-        )
+        if spec.architecture is None:
+            model, checkpoint_hash = load_model_checkpoint(
+                spec.checkpoint_path,
+                evaluation_device,
+            )
+        else:
+            model, checkpoint_hash = load_model_checkpoint(
+                spec.checkpoint_path,
+                evaluation_device,
+                architecture=spec.architecture,
+            )
         loaded_models.append((spec, model, checkpoint_hash))
         checkpoint_hashes[spec.model_id] = checkpoint_hash
         checkpoint_records.append({
             "model_id": spec.model_id,
             "model_title": spec.model_title,
+            "architecture_override": spec.architecture or "auto",
             "path": str(spec.checkpoint_path),
             "sha256": checkpoint_hash,
         })
@@ -606,12 +579,14 @@ def run_random_standard_3_abc_evaluation(
         predictions["evaluation_title"] = evaluation_title
         predictions["dataset_id"] = dataset_id
         predictions["model_title"] = spec.model_title
+        predictions["architecture_override"] = spec.architecture or "auto"
         clean_tables.append(predictions)
         clean_by_model[spec.model_id] = predictions
         clean_metrics.append(_metric_row(
             dataset_id=dataset_id,
             model_id=spec.model_id,
             model_title=spec.model_title,
+            architecture_override=spec.architecture or "auto",
             checkpoint_hash=checkpoint_hash,
             scope="clean",
             trial_index=None,
@@ -677,11 +652,13 @@ def run_random_standard_3_abc_evaluation(
                 evaluation_title=evaluation_title,
             )
             enriched["model_title"] = spec.model_title
+            enriched["architecture_override"] = spec.architecture or "auto"
             random_tables.append(enriched)
             trial_metric_rows.append(_metric_row(
                 dataset_id=dataset_id,
                 model_id=spec.model_id,
                 model_title=spec.model_title,
+                architecture_override=spec.architecture or "auto",
                 checkpoint_hash=checkpoint_hash,
                 scope="random_trial",
                 trial_index=trial_index,
@@ -707,41 +684,36 @@ def run_random_standard_3_abc_evaluation(
         [trial_metrics, pooled_metrics],
         ignore_index=True,
     )
-    pairwise = {
-        "a_vs_b": _pairwise_comparison(
-            comparison_metrics,
-            reference_model_id=specs[0].model_id,
-            candidate_model_id=specs[1].model_id,
-            model_titles=model_titles,
-            evaluation_title=evaluation_title,
-        ),
-        "b_vs_c": _pairwise_comparison(
-            comparison_metrics,
-            reference_model_id=specs[1].model_id,
-            candidate_model_id=specs[2].model_id,
-            model_titles=model_titles,
-            evaluation_title=evaluation_title,
-        ),
-        "a_vs_c": _pairwise_comparison(
-            comparison_metrics,
-            reference_model_id=specs[0].model_id,
-            candidate_model_id=specs[2].model_id,
-            model_titles=model_titles,
-            evaluation_title=evaluation_title,
-        ),
+    legacy_pair_keys = {
+        (MODEL_A_ID, MODEL_B_ID): "a_vs_b",
+        (MODEL_B_ID, MODEL_C_ID): "b_vs_c",
+        (MODEL_A_ID, MODEL_C_ID): "a_vs_c",
     }
+    pairwise: dict[str, pd.DataFrame] = {}
+    for reference_spec, candidate_spec in model_pairs(specs):
+        pair_key = legacy_pair_keys.get(
+            (reference_spec.model_id, candidate_spec.model_id),
+            f"{reference_spec.model_id}_vs_{candidate_spec.model_id}",
+        )
+        pairwise[pair_key] = _pairwise_comparison(
+            comparison_metrics,
+            reference_model_id=reference_spec.model_id,
+            candidate_model_id=candidate_spec.model_id,
+            model_titles=title_by_id,
+            evaluation_title=evaluation_title,
+        )
     patterns = _group_metrics(
         predictions,
         group_column="chain_pattern",
         breakdown_type="ordered_chain_pattern",
         threshold=threshold,
-        model_titles=model_titles,
+        model_titles=title_by_id,
         evaluation_title=evaluation_title,
     )
     inclusion = _transform_inclusion_metrics(
         predictions,
         threshold=threshold,
-        model_titles=model_titles,
+        model_titles=title_by_id,
         evaluation_title=evaluation_title,
     )
     errors = predictions[~predictions["is_correct"]].copy()
@@ -785,6 +757,7 @@ def run_random_standard_3_abc_evaluation(
         "chain_length": RANDOM_STANDARD_3_CHAIN_LENGTH,
         "distinct_transform_types_per_chain": True,
         "random_order": True,
+        "num_models": len(specs),
         "trial_seeds": list(trial_seeds),
         "seed_identity": "policy + dataset_id + image_path + trial_seed",
         "parameter_grid": {
@@ -809,10 +782,68 @@ def run_random_standard_3_abc_evaluation(
     return outputs
 
 
+def run_random_standard_3_abc_evaluation(
+    *,
+    dataset_id: str,
+    data_root: str | Path,
+    manifest_path: str | Path,
+    checkpoint_a_baseline: str | Path,
+    checkpoint_b_robustness: str | Path,
+    checkpoint_c_consistency: str | Path,
+    output_dir: str | Path,
+    split: str = "val",
+    threshold: float = 0.5,
+    batch_size: int = 32,
+    num_workers: int = 2,
+    device: torch.device | None = None,
+    trial_seeds: Sequence[int] = DEFAULT_TRIAL_SEEDS,
+    model_a_id: str = MODEL_A_ID,
+    model_a_title: str = MODEL_TITLES[MODEL_A_ID],
+    model_b_id: str = MODEL_B_ID,
+    model_b_title: str = MODEL_TITLES[MODEL_B_ID],
+    model_c_id: str = MODEL_C_ID,
+    model_c_title: str = MODEL_TITLES[MODEL_C_ID],
+) -> dict[str, pd.DataFrame]:
+    """Backward-compatible wrapper for the original three-model command."""
+    specs = _model_specs(
+        checkpoint_a_baseline,
+        checkpoint_b_robustness,
+        checkpoint_c_consistency,
+        model_a_id=model_a_id,
+        model_a_title=model_a_title,
+        model_b_id=model_b_id,
+        model_b_title=model_b_title,
+        model_c_id=model_c_id,
+        model_c_title=model_c_title,
+    )
+    outputs = run_random_standard_3_evaluation(
+        dataset_id=dataset_id,
+        data_root=data_root,
+        manifest_path=manifest_path,
+        model_specs=specs,
+        output_dir=output_dir,
+        split=split,
+        threshold=threshold,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        device=device,
+        trial_seeds=trial_seeds,
+    )
+    positional_aliases = {
+        "a_vs_b": f"{specs[0].model_id}_vs_{specs[1].model_id}",
+        "b_vs_c": f"{specs[1].model_id}_vs_{specs[2].model_id}",
+        "a_vs_c": f"{specs[0].model_id}_vs_{specs[2].model_id}",
+    }
+    for alias, dynamic_key in positional_aliases.items():
+        if alias not in outputs and dynamic_key in outputs:
+            outputs[alias] = outputs[dynamic_key]
+    return outputs
+
+
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Compare three named checkpoints over five seeded per-image "
+            "Compare two or more named checkpoints over seeded per-image "
             "random three-transform trials."
         )
     )
@@ -823,19 +854,16 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--checkpoint-a-baseline",
         "--checkpoint-a",
         dest="checkpoint_a_baseline",
-        required=True,
     )
     parser.add_argument(
         "--checkpoint-b-robustness",
         "--checkpoint-b",
         dest="checkpoint_b_robustness",
-        required=True,
     )
     parser.add_argument(
         "--checkpoint-c-consistency",
         "--checkpoint-c",
         dest="checkpoint_c_consistency",
-        required=True,
     )
     parser.add_argument("--model-a-id", default=MODEL_A_ID)
     parser.add_argument("--model-a-title", default=MODEL_TITLES[MODEL_A_ID])
@@ -843,6 +871,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-b-title", default=MODEL_TITLES[MODEL_B_ID])
     parser.add_argument("--model-c-id", default=MODEL_C_ID)
     parser.add_argument("--model-c-title", default=MODEL_TITLES[MODEL_C_ID])
+    add_variable_model_arguments(parser)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--split", choices=["val", "test"], default="val")
     parser.add_argument("--threshold", type=float, default=0.5)
@@ -864,13 +893,35 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = build_argument_parser().parse_args(argv)
-    outputs = run_random_standard_3_abc_evaluation(
+    try:
+        specs = variable_model_specs_from_args(args)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+    if specs is None:
+        legacy_checkpoints = (
+            args.checkpoint_a_baseline,
+            args.checkpoint_b_robustness,
+            args.checkpoint_c_consistency,
+        )
+        if any(path is None for path in legacy_checkpoints):
+            raise SystemExit(
+                "provide all three legacy checkpoint flags or use "
+                "--checkpoints with --model-ids"
+            )
+        specs = _model_specs(
+            *legacy_checkpoints,
+            model_a_id=args.model_a_id,
+            model_a_title=args.model_a_title,
+            model_b_id=args.model_b_id,
+            model_b_title=args.model_b_title,
+            model_c_id=args.model_c_id,
+            model_c_title=args.model_c_title,
+        )
+    outputs = run_random_standard_3_evaluation(
         dataset_id=args.dataset_id,
         data_root=args.data_root,
         manifest_path=args.manifest,
-        checkpoint_a_baseline=args.checkpoint_a_baseline,
-        checkpoint_b_robustness=args.checkpoint_b_robustness,
-        checkpoint_c_consistency=args.checkpoint_c_consistency,
+        model_specs=specs,
         output_dir=args.output_dir,
         split=args.split,
         threshold=args.threshold,
@@ -878,12 +929,6 @@ def main(argv: Sequence[str] | None = None) -> None:
         num_workers=args.num_workers,
         device=resolve_device(args.device),
         trial_seeds=args.trial_seeds,
-        model_a_id=args.model_a_id,
-        model_a_title=args.model_a_title,
-        model_b_id=args.model_b_id,
-        model_b_title=args.model_b_title,
-        model_c_id=args.model_c_id,
-        model_c_title=args.model_c_title,
     )
     print(outputs["headline"]["evaluation_title"].iloc[0])
     print(f"Dataset: {args.dataset_id}")

@@ -244,44 +244,84 @@ form or a bare state dict.
 
 ### 6. Evaluate against the challenge transform grid
 
-`evaluate.py` loads two named checkpoints, evaluates both on the same manifest
-rows in the same order, and records checkpoint hashes so a run can be traced
-back to the exact model files. The defaults call the two result sets
-`experiment_a` and `experiment_b`; pass explicit model IDs when comparing a
-different pair.
+All four evaluation modes now share one variable-length model interface. Each
+run accepts two or more aligned checkpoint, ID, title, and architecture values:
+
+- `--checkpoints` contains the model files.
+- `--model-ids` contains unique lowercase IDs used in columns and filenames.
+- `--model-titles` contains the human-readable names printed in every report.
+- `--architectures` contains the matching architecture override for each
+  checkpoint. Use `auto` only when the checkpoint records its architecture or
+  is an EfficientNet-B0 checkpoint.
+
+The four lists must contain the same number of values. Every model sees the
+same manifest rows and transformed pixels, checkpoint hashes are recorded, and
+all `n(n-1)/2` pairwise comparisons are generated. For example, four models
+produce six pairwise comparisons. The older A/B and A/B/C flags remain
+available so saved notebooks continue to run, but new runs should use the
+plural interface.
 
 First reproduce the clean validation results:
 
 ```bash
-python evaluate.py --mode clean --data-root <dataset_root> --manifest <manifest.csv> --checkpoint-a <experiment_a.pt> --checkpoint-b <experiment_b.pt> --output-dir results/clean_validation --split val --device auto
+python evaluate.py \
+  --mode clean \
+  --data-root <sid_dataset_root> \
+  --manifest <sid_manifest.csv> \
+  --checkpoints <experiment_sid_a_clean_best.pt> <experiment_sid_b_robust_best.pt> \
+  --model-ids sid_a_clean sid_b_robust \
+  --model-titles "SID A — EfficientNet clean" "SID B — EfficientNet robust" \
+  --architectures efficientnet_b0 efficientnet_b0 \
+  --output-dir results/sid_a_vs_sid_b_clean \
+  --split val \
+  --device auto
 ```
 
-After the clean integration check passes, run the fixed robustness grid:
+After the clean integration check passes, run the basic single-transform grid:
 
 ```bash
-python evaluate.py --mode robustness --data-root <dataset_root> --manifest <manifest.csv> --checkpoint-a <experiment_a.pt> --checkpoint-b <experiment_b.pt> --output-dir results/robustness_validation --split val --device auto --seed 42
+python evaluate.py \
+  --mode robustness \
+  --data-root <sid_dataset_root> \
+  --manifest <sid_manifest.csv> \
+  --checkpoints <experiment_sid_a_clean_best.pt> <experiment_sid_b_robust_best.pt> \
+  --model-ids sid_a_clean sid_b_robust \
+  --model-titles "SID A — EfficientNet clean" "SID B — EfficientNet robust" \
+  --architectures efficientnet_b0 efficientnet_b0 \
+  --output-dir results/sid_a_vs_sid_b_basic \
+  --split val \
+  --device auto \
+  --seed 42
 ```
 
-To measure the additional contribution of consistency training, compare B
-against C with the same validation split, threshold, transformations, and
-seed. The `checkpoint-a`/`checkpoint-b` names mean first/second comparison
-slots here; the explicit IDs ensure every output row is labelled correctly:
+To compare the three robustness-trained SID architectures, append each aligned
+value. This pattern works identically in clean, basic, fixed, and random mode:
 
 ```bash
-python evaluate.py --mode robustness --data-root <dataset_root> --manifest <manifest.csv> --checkpoint-a <experiment_b_robustness_best.pt> --model-a-id experiment_b --checkpoint-b <experiment_c_consistency_best.pt> --model-b-id experiment_c --output-dir results/robustness_b_vs_c_validation --split val --device auto --seed 42
+python evaluate.py \
+  --mode robustness \
+  --data-root <sid_dataset_root> \
+  --manifest <sid_manifest.csv> \
+  --checkpoints <experiment_sid_b_robust_best.pt> <experiment_sid_convnext_robust_best.pt> <experiment_sid_dinov2_robust_best.pt> \
+  --model-ids sid_b_robust sid_convnext_robust sid_dino_robust \
+  --model-titles "SID B — EfficientNet robust" "SID ConvNeXt — robust" "SID DINOv2 — robust" \
+  --architectures efficientnet_b0 convnext_tiny dinov2_vits14 \
+  --output-dir results/sid_robust_architectures_basic \
+  --split val \
+  --device auto \
+  --seed 42
 ```
 
-Keep the earlier A-versus-B result directory. Do not overwrite it. The saved
-A/B metrics and this B/C run can later be joined by transform and severity to
-produce the final A/B/C ablation table without rerunning A.
+Keep each experiment in a separate output directory. Adding a model increases
+inference work, but it does not require a new evaluator or code change.
 
 The robustness runner uses:
 
 - `exact_transform(img, name, param)` in
   [src/augmentations.py](src/augmentations.py) to apply each named transform.
   Names match the six challenge dimensions: `jpeg`, `blur`, `resize`, `noise`,
-  `colour`, `crop`. Gaussian noise is seeded per image so A and B receive the
-  same noisy pixels and later runs are reproducible.
+  `colour`, `crop`. Gaussian noise is seeded per image so every model receives
+  the same noisy pixels and later runs are reproducible.
 - `compute_binary_metrics(labels, probabilities, threshold=0.5)` in
   [src/metrics.py](src/metrics.py) — returns accuracy, balanced accuracy,
   precision/recall/F1, AUROC, AUPRC, FPR/FNR, and Brier score.
@@ -301,21 +341,19 @@ The robustness run writes:
 
 - `robustness_predictions.csv` — one row per image, model, and condition.
 - `robustness_metrics.csv` — full metrics for each model and condition.
-- `robustness_comparison.csv` — A/B accuracy, drop from clean, and the better
-  model for every condition.
+- `robustness_comparison.csv` — every model pair, IDs and titles, full metrics,
+  candidate-minus-reference differences, clean drops, and winners for every
+  condition.
 - `robustness_config.json` — split, seed, preprocessing, condition grid, and
   checkpoint hashes used for the run.
 
-### 6.1 Fixed chained robustness across Models A, B, and C
+### 6.1 Fixed chained robustness
 
-`evaluate_fixed_robustness_abc.py` is the explicit three-model runner. It
-avoids generic spreadsheet headings such as `model_a_accuracy` when the first
-slot actually contains Model B. The model roles are fixed and fully named:
-
-- `model_a_clean_baseline` — Model A, trained on clean images.
-- `model_b_robustness` — Model B, trained with robustness augmentation.
-- `model_c_consistency` — Model C, trained with robustness augmentation plus
-  consistency loss.
+`evaluate_fixed_robustness_abc.py` accepts the same variable list of two or
+more models. The `_abc` filename is retained only because existing notebooks
+import it; the evaluator is no longer restricted to Models A, B, and C.
+Reports use the supplied IDs and titles, so a SID A/SID B comparison is never
+presented as a generic A/B slot comparison.
 
 The default `all-fixed` condition set runs clean, all 15 official single
 conditions, and these five deterministic chained conditions:
@@ -328,18 +366,19 @@ conditions, and these five deterministic chained conditions:
 | Fixed screenshot resample | Resize 0.50× → Blur 0.50 → JPEG quality 70 |
 | Fixed repeated JPEG | JPEG quality 90 → JPEG 70 → JPEG 50 |
 
-Every condition starts again from the original image. Models A, B, and C see
+Every condition starts again from the original image. All supplied models see
 the same manifest rows, transform order, transform parameters, threshold, and
 seed. This runner performs no random condition selection.
 
 ```bash
 python evaluate_fixed_robustness_abc.py \
-  --data-root <dataset_root> \
-  --manifest <manifest.csv> \
-  --checkpoint-a-baseline <experiment_a_baseline_best.pt> \
-  --checkpoint-b-robustness <experiment_b_robustness_best.pt> \
-  --checkpoint-c-consistency <experiment_c_consistency_best.pt> \
-  --output-dir results/fixed_robustness_abc_validation \
+  --data-root <sid_dataset_root> \
+  --manifest <sid_manifest.csv> \
+  --checkpoints <experiment_sid_a_clean_best.pt> <experiment_sid_b_robust_best.pt> \
+  --model-ids sid_a_clean sid_b_robust \
+  --model-titles "SID A — EfficientNet clean" "SID B — EfficientNet robust" \
+  --architectures efficientnet_b0 efficientnet_b0 \
+  --output-dir results/sid_a_vs_sid_b_fixed \
   --split val \
   --condition-set all-fixed \
   --device auto \
@@ -347,15 +386,11 @@ python evaluate_fixed_robustness_abc.py \
 ```
 
 Use `--condition-set fixed-chains-only` to run just clean plus the five chains.
-The default full run writes filenames that state the exact models involved:
-
-- `fixed_robustness__model_A_baseline_vs_model_B_robustness.csv`
-- `fixed_robustness__model_B_robustness_vs_model_C_consistency.csv`
-- `fixed_robustness__model_A_baseline_vs_model_C_consistency.csv`
-- `fixed_robustness__models_A_B_C__combined_summary.csv`
-- `fixed_robustness__models_A_B_C__full_metrics.csv`
-- `fixed_robustness__models_A_B_C__per_image_predictions.csv`
-- `fixed_robustness__models_A_B_C__run_config.json`
+New runs write one clearly named file per pair, such as
+`fixed_robustness__sid_a_clean_vs_sid_b_robust.csv`, plus combined summary,
+full-metric, per-image prediction, and configuration files containing the full
+model-ID token. Supplying three, four, or five models automatically adds all
+pair files and expands the combined summary.
 
 The metrics and comparison files include the confusion-matrix counts (true
 negatives, false positives, false negatives, and true positives), accuracy,
@@ -371,11 +406,12 @@ exact transformed image was definitely shown during training.
 
 ### 6.2 Seeded random three-transform evaluation
 
-`evaluate_random_robustness_abc.py` is the first random-chain milestone. For
-each image and trial it selects three distinct transform types, randomises
-their order, and samples each parameter from the official challenge grid.
-The assignment is derived from `dataset_id + image_path + trial_seed`, so all
-three models receive identical damaged pixels and any result can be recreated.
+`evaluate_random_robustness_abc.py` uses the same variable model interface.
+The `_abc` filename remains for notebook compatibility. For each image and
+trial it selects three distinct transform types, randomises their order, and
+samples each parameter from the official challenge grid. The assignment is
+derived from `dataset_id + image_path + trial_seed`, so every supplied model
+receives identical damaged pixels and any result can be recreated.
 
 The default five trials use seeds `42 43 44 45 46`. CIFAKE and SID_Set should
 be run separately with different `--dataset-id` and output directories rather
@@ -383,13 +419,14 @@ than mixing their rows into one accuracy figure.
 
 ```bash
 python evaluate_random_robustness_abc.py \
-  --dataset-id CIFAKE \
-  --data-root <dataset_root> \
-  --manifest <manifest.csv> \
-  --checkpoint-a-baseline <experiment_a_baseline_best.pt> \
-  --checkpoint-b-robustness <experiment_b_robustness_best.pt> \
-  --checkpoint-c-consistency <experiment_c_consistency_best.pt> \
-  --output-dir results/cifake_random_standard_3 \
+  --dataset-id SID_SET \
+  --data-root <sid_dataset_root> \
+  --manifest <sid_manifest.csv> \
+  --checkpoints <experiment_sid_a_clean_best.pt> <experiment_sid_b_robust_best.pt> \
+  --model-ids sid_a_clean sid_b_robust \
+  --model-titles "SID A — EfficientNet clean" "SID B — EfficientNet robust" \
+  --architectures efficientnet_b0 efficientnet_b0 \
+  --output-dir results/sid_a_vs_sid_b_random_standard_3 \
   --split val \
   --trial-seeds 42 43 44 45 46 \
   --device auto
@@ -397,27 +434,23 @@ python evaluate_random_robustness_abc.py \
 
 The primary result is pooled accuracy across all random trials, accompanied
 by the mean and standard deviation across seeds and the drop from clean. The
-runner also writes A/B, B/C, and A/C comparisons, ordered-pattern and
+runner also writes every pairwise comparison, ordered-pattern and
 transform-inclusion breakdowns, every per-image chain assignment, all
 per-image predictions, false positives and false negatives, clean-to-damaged
 prediction changes, checkpoint hashes, and the complete random policy.
 
-The same evaluator can compare any three compatible checkpoints. Supply
-explicit IDs and titles so exported tables describe the actual models instead
-of incorrectly presenting every run as the original A/B/C experiment:
+To run the three robustness-trained SID architectures, use:
 
 ```bash
 python evaluate_random_robustness_abc.py \
   --dataset-id SID_SET \
   --data-root <sid_dataset_root> \
   --manifest <sid_manifest.csv> \
-  --checkpoint-a <best_old_checkpoint.pt> \
-  --model-a-id best_old --model-a-title "Best old CIFAKE checkpoint" \
-  --checkpoint-b <experiment_sid_a_clean_best.pt> \
-  --model-b-id sid_a_clean --model-b-title "SID A clean training" \
-  --checkpoint-c <experiment_sid_b_robust_best.pt> \
-  --model-c-id sid_b_robust --model-c-title "SID B robustness training" \
-  --output-dir results/sid_best_old_vs_sid_a_vs_sid_b \
+  --checkpoints <experiment_sid_b_robust_best.pt> <experiment_sid_convnext_robust_best.pt> <experiment_sid_dinov2_robust_best.pt> \
+  --model-ids sid_b_robust sid_convnext_robust sid_dino_robust \
+  --model-titles "SID B — EfficientNet robust" "SID ConvNeXt — robust" "SID DINOv2 — robust" \
+  --architectures efficientnet_b0 convnext_tiny dinov2_vits14 \
+  --output-dir results/sid_robust_architectures_random_standard_3 \
   --split val \
   --trial-seeds 42 43 44 45 46 \
   --device auto
@@ -425,7 +458,9 @@ python evaluate_random_robustness_abc.py \
 
 Model IDs must be unique lowercase identifiers containing letters, numbers,
 or underscores. They are used in column names and filenames; titles are the
-human-readable descriptions shown in the results.
+human-readable descriptions shown in the results. Add or remove aligned list
+items to evaluate two, three, four, five, or more models without changing the
+Python source.
 
 ### 7. Run predict.py for the final submission
 

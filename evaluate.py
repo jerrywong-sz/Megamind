@@ -27,6 +27,16 @@ from src.evaluation_conditions import (
     build_condition_transform,
 )
 from src.metrics import compute_binary_metrics
+from src.evaluation_models import (
+    EvaluationModelSpec,
+    add_variable_model_arguments,
+    build_model_specs,
+    comparison_title,
+    model_pairs,
+    model_titles,
+    validate_model_specs,
+    variable_model_specs_from_args,
+)
 from src.models import build_model
 
 
@@ -51,6 +61,7 @@ PREDICTION_COLUMNS = [
 METRICS_FILENAMES = {
     "predictions": "clean_predictions.csv",
     "metrics": "clean_metrics.csv",
+    "comparison": "clean_pairwise_comparisons.csv",
     "config": "evaluation_config.json",
 }
 
@@ -306,6 +317,199 @@ def resolve_device(requested_device: str) -> torch.device:
     return torch.device(requested_device)
 
 
+def _metric_names(metrics_table: pd.DataFrame) -> list[str]:
+    excluded = {
+        "evaluation_title",
+        "model_id",
+        "model_title",
+        "architecture_override",
+        "checkpoint_hash",
+        "split",
+        "transform",
+        "severity",
+        "seed",
+    }
+    return [column for column in metrics_table.columns if column not in excluded]
+
+
+def build_clean_pairwise_comparisons(
+    metrics_table: pd.DataFrame,
+    *,
+    model_specs: Sequence[EvaluationModelSpec],
+) -> pd.DataFrame:
+    """Build one clean-metric row for every model pair."""
+    specs = validate_model_specs(model_specs)
+    rows_by_model = {
+        str(row["model_id"]): row
+        for _, row in metrics_table.iterrows()
+    }
+    metrics = _metric_names(metrics_table)
+    output_rows: list[dict[str, Any]] = []
+    evaluation_title = (
+        str(metrics_table["evaluation_title"].iloc[0])
+        if "evaluation_title" in metrics_table.columns
+        else comparison_title("Clean evaluation", specs)
+    )
+    for reference_spec, candidate_spec in model_pairs(specs):
+        reference = rows_by_model[reference_spec.model_id]
+        candidate = rows_by_model[candidate_spec.model_id]
+        row: dict[str, Any] = {
+            "evaluation_title": evaluation_title,
+            "reference_model_id": reference_spec.model_id,
+            "reference_model_title": reference_spec.model_title,
+            "candidate_model_id": candidate_spec.model_id,
+            "candidate_model_title": candidate_spec.model_title,
+            "difference_direction": (
+                f"{candidate_spec.model_id} minus {reference_spec.model_id}"
+            ),
+        }
+        for metric in metrics:
+            reference_value = reference[metric]
+            candidate_value = candidate[metric]
+            row[f"{reference_spec.model_id}__{metric}"] = reference_value
+            row[f"{candidate_spec.model_id}__{metric}"] = candidate_value
+            if metric not in {"num_samples", "threshold"}:
+                row[
+                    f"{candidate_spec.model_id}_minus_"
+                    f"{reference_spec.model_id}__{metric}"
+                ] = float(candidate_value) - float(reference_value)
+        accuracy_difference = float(candidate["accuracy"]) - float(
+            reference["accuracy"]
+        )
+        row["higher_accuracy_model"] = (
+            "tie"
+            if abs(accuracy_difference) < 1e-12
+            else (
+                candidate_spec.model_id
+                if accuracy_difference > 0
+                else reference_spec.model_id
+            )
+        )
+        output_rows.append(row)
+    return pd.DataFrame(output_rows)
+
+
+def run_clean_model_specs(
+    *,
+    data_root: str | Path,
+    manifest_path: str | Path,
+    model_specs: Sequence[EvaluationModelSpec],
+    output_dir: str | Path,
+    split: str = "val",
+    threshold: float = 0.5,
+    batch_size: int = 32,
+    num_workers: int = 2,
+    device: torch.device | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Evaluate two or more named checkpoints on one clean split."""
+    specs = validate_model_specs(model_specs)
+    if not 0.0 <= threshold <= 1.0:
+        raise ValueError("threshold must be between 0 and 1")
+
+    evaluation_device = device or resolve_device("auto")
+    evaluation_title = comparison_title("Clean evaluation", specs)
+    data_loader = get_evaluation_dataloader(
+        data_root=str(data_root),
+        manifest_path=str(manifest_path),
+        split=split,
+        batch_size=batch_size,
+        num_workers=num_workers,
+    )
+    prediction_tables: list[pd.DataFrame] = []
+    metric_rows: list[dict[str, Any]] = []
+    checkpoint_records: list[dict[str, Any]] = []
+    reference_rows: pd.DataFrame | None = None
+
+    for spec in specs:
+        model, checkpoint_hash = load_model_checkpoint(
+            spec.checkpoint_path,
+            evaluation_device,
+            architecture=spec.architecture,
+        )
+        print(f"Clean evaluation: {spec.model_title}")
+        predictions, metrics = evaluate_clean_model(
+            model,
+            data_loader,
+            evaluation_device,
+            model_id=spec.model_id,
+            threshold=threshold,
+            checkpoint_hash=checkpoint_hash,
+        )
+        current_rows = predictions[["image_path", "label"]].reset_index(
+            drop=True
+        )
+        if reference_rows is None:
+            reference_rows = current_rows
+        elif not current_rows.equals(reference_rows):
+            raise RuntimeError(
+                "models were not evaluated on the same images in the same order"
+            )
+
+        predictions["model_title"] = spec.model_title
+        predictions["architecture_override"] = spec.architecture or "auto"
+        predictions["evaluation_title"] = evaluation_title
+        prediction_tables.append(predictions)
+        metric_rows.append({
+            "model_id": spec.model_id,
+            "model_title": spec.model_title,
+            "architecture_override": spec.architecture or "auto",
+            "evaluation_title": evaluation_title,
+            "checkpoint_hash": checkpoint_hash,
+            "split": split,
+            **metrics,
+        })
+        checkpoint_records.append({
+            **spec.as_record(),
+            "sha256": checkpoint_hash,
+        })
+        del model
+        if evaluation_device.type == "cuda":
+            torch.cuda.empty_cache()
+
+    assert reference_rows is not None
+    combined_predictions = pd.concat(prediction_tables, ignore_index=True)
+    metrics_table = pd.DataFrame(metric_rows)
+    comparison_table = build_clean_pairwise_comparisons(
+        metrics_table,
+        model_specs=specs,
+    )
+
+    destination = Path(output_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+    combined_predictions.to_csv(
+        destination / METRICS_FILENAMES["predictions"], index=False
+    )
+    metrics_table.to_csv(
+        destination / METRICS_FILENAMES["metrics"], index=False
+    )
+    comparison_table.to_csv(
+        destination / METRICS_FILENAMES["comparison"], index=False
+    )
+    run_config = {
+        "mode": "clean",
+        "evaluation_title": evaluation_title,
+        "data_root": str(data_root),
+        "manifest_path": str(manifest_path),
+        "split": split,
+        "threshold": threshold,
+        "batch_size": batch_size,
+        "num_workers": num_workers,
+        "device": str(evaluation_device),
+        "preprocessing": "src.data.get_eval_transform",
+        "num_models": len(specs),
+        "num_images_per_model": int(len(reference_rows)),
+        "models": checkpoint_records,
+        "checkpoints": checkpoint_records,
+        "output_files": METRICS_FILENAMES,
+    }
+    with (destination / METRICS_FILENAMES["config"]).open(
+        "w", encoding="utf-8"
+    ) as config_file:
+        json.dump(run_config, config_file, indent=2, ensure_ascii=False)
+        config_file.write("\n")
+    return combined_predictions, metrics_table
+
+
 def run_clean_comparison(
     *,
     data_root: str | Path,
@@ -324,115 +528,23 @@ def run_clean_comparison(
     device: torch.device | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Evaluate two named checkpoints fairly on one clean manifest split."""
-    if model_a_id == model_b_id:
-        raise ValueError("the two checkpoints must have different model IDs")
-    if not 0.0 <= threshold <= 1.0:
-        raise ValueError("threshold must be between 0 and 1")
-
-    evaluation_device = device or resolve_device("auto")
-    data_loader = get_evaluation_dataloader(
-        data_root=str(data_root),
-        manifest_path=str(manifest_path),
+    specs = build_model_specs(
+        checkpoints=(checkpoint_a, checkpoint_b),
+        model_ids=(model_a_id, model_b_id),
+        model_titles=(model_a_id, model_b_id),
+        architectures=(architecture_a, architecture_b),
+    )
+    return run_clean_model_specs(
+        data_root=data_root,
+        manifest_path=manifest_path,
+        model_specs=specs,
+        output_dir=output_dir,
         split=split,
+        threshold=threshold,
         batch_size=batch_size,
         num_workers=num_workers,
+        device=device,
     )
-
-    model_specs = [
-        (
-            model_a_id,
-            Path(checkpoint_a),
-            architecture_a,
-        ),
-        (
-            model_b_id,
-            Path(checkpoint_b),
-            architecture_b,
-        ),
-    ]
-    prediction_tables: list[pd.DataFrame] = []
-    metric_rows: list[dict[str, Any]] = []
-    checkpoint_records: list[dict[str, str]] = []
-    reference_rows: pd.DataFrame | None = None
-
-    for (
-        model_id,
-        checkpoint_path,
-        architecture,
-    ) in model_specs:
-        model, checkpoint_hash = load_model_checkpoint(
-            checkpoint_path,
-            evaluation_device,
-            architecture=architecture,
-        )
-        predictions, metrics = evaluate_clean_model(
-            model,
-            data_loader,
-            evaluation_device,
-            model_id=model_id,
-            threshold=threshold,
-            checkpoint_hash=checkpoint_hash,
-        )
-
-        current_rows = predictions[["image_path", "label"]].reset_index(drop=True)
-        if reference_rows is None:
-            reference_rows = current_rows
-        elif not current_rows.equals(reference_rows):
-            raise RuntimeError(
-                "models were not evaluated on the same images in the same order"
-            )
-
-        prediction_tables.append(predictions)
-        metric_rows.append({
-            "model_id": model_id,
-            "checkpoint_hash": checkpoint_hash,
-            "split": split,
-            **metrics,
-        })
-        checkpoint_records.append({
-            "model_id": model_id,
-            "path": str(checkpoint_path),
-            "sha256": checkpoint_hash,
-        })
-
-        del model
-        if evaluation_device.type == "cuda":
-            torch.cuda.empty_cache()
-
-    combined_predictions = pd.concat(prediction_tables, ignore_index=True)
-    metrics_table = pd.DataFrame(metric_rows)
-
-    destination = Path(output_dir)
-    destination.mkdir(parents=True, exist_ok=True)
-    combined_predictions.to_csv(
-        destination / METRICS_FILENAMES["predictions"],
-        index=False,
-    )
-    metrics_table.to_csv(
-        destination / METRICS_FILENAMES["metrics"],
-        index=False,
-    )
-
-    run_config = {
-        "data_root": str(data_root),
-        "manifest_path": str(manifest_path),
-        "split": split,
-        "threshold": threshold,
-        "batch_size": batch_size,
-        "num_workers": num_workers,
-        "device": str(evaluation_device),
-        "preprocessing": "src.data.get_eval_transform",
-        "num_images_per_model": int(len(reference_rows)),
-        "checkpoints": checkpoint_records,
-    }
-    with (destination / METRICS_FILENAMES["config"]).open(
-        "w",
-        encoding="utf-8",
-    ) as config_file:
-        json.dump(run_config, config_file, indent=2)
-        config_file.write("\n")
-
-    return combined_predictions, metrics_table
 
 
 def build_robustness_comparison(
@@ -441,8 +553,16 @@ def build_robustness_comparison(
     conditions: Sequence[EvaluationCondition],
     model_a_id: str,
     model_b_id: str,
+    model_a_title: str | None = None,
+    model_b_title: str | None = None,
+    evaluation_title: str | None = None,
 ) -> pd.DataFrame:
-    """Compare two named models per condition and calculate clean drops."""
+    """Compare two named models per condition and calculate clean drops.
+
+    The original ``model_a_*``/``model_b_*`` columns remain for compatibility.
+    Clear reference/candidate columns and model-ID-qualified metric columns make
+    new comparisons self-describing even when neither model is Experiment A.
+    """
     clean_rows = metrics_table[metrics_table["transform"] == "clean"]
     clean_accuracy = clean_rows.set_index("model_id")["accuracy"].to_dict()
     if model_a_id not in clean_accuracy or model_b_id not in clean_accuracy:
@@ -466,6 +586,10 @@ def build_robustness_comparison(
                 "robustness metrics must include both models for every condition"
             )
 
+        rows_by_model = {
+            str(row["model_id"]): row
+            for _, row in condition_rows.iterrows()
+        }
         model_a_accuracy = float(accuracies[model_a_id])
         model_b_accuracy = float(accuracies[model_b_id])
         difference = model_b_accuracy - model_a_accuracy
@@ -476,9 +600,24 @@ def build_robustness_comparison(
         else:
             better_model = model_a_id
 
-        comparison_rows.append({
+        comparison_row: dict[str, Any] = {
+            "evaluation_title": evaluation_title,
             "transform": condition.name,
             "severity": condition.severity,
+            "reference_model_id": model_a_id,
+            "reference_model_title": model_a_title or model_a_id,
+            "candidate_model_id": model_b_id,
+            "candidate_model_title": model_b_title or model_b_id,
+            "difference_direction": f"{model_b_id} minus {model_a_id}",
+            "reference_accuracy": model_a_accuracy,
+            "candidate_accuracy": model_b_accuracy,
+            "candidate_minus_reference_accuracy": difference,
+            "reference_drop_from_clean": (
+                float(clean_accuracy[model_a_id]) - model_a_accuracy
+            ),
+            "candidate_drop_from_clean": (
+                float(clean_accuracy[model_b_id]) - model_b_accuracy
+            ),
             "model_a_id": model_a_id,
             "model_b_id": model_b_id,
             "model_a_accuracy": model_a_accuracy,
@@ -491,9 +630,187 @@ def build_robustness_comparison(
                 float(clean_accuracy[model_b_id]) - model_b_accuracy
             ),
             "better_model": better_model,
-        })
+            "higher_accuracy_model": better_model,
+        }
+        reference = rows_by_model[model_a_id]
+        candidate = rows_by_model[model_b_id]
+        for metric in _metric_names(metrics_table):
+            reference_value = reference[metric]
+            candidate_value = candidate[metric]
+            comparison_row[f"{model_a_id}__{metric}"] = reference_value
+            comparison_row[f"{model_b_id}__{metric}"] = candidate_value
+            if metric not in {"num_samples", "threshold"}:
+                comparison_row[
+                    f"{model_b_id}_minus_{model_a_id}__{metric}"
+                ] = float(candidate_value) - float(reference_value)
+        comparison_rows.append(comparison_row)
 
     return pd.DataFrame(comparison_rows)
+
+
+def run_robustness_model_specs(
+    *,
+    data_root: str | Path,
+    manifest_path: str | Path,
+    model_specs: Sequence[EvaluationModelSpec],
+    output_dir: str | Path,
+    split: str = "val",
+    threshold: float = 0.5,
+    batch_size: int = 32,
+    num_workers: int = 2,
+    device: torch.device | None = None,
+    seed: int = 42,
+    conditions: Sequence[EvaluationCondition] = ALL_EVALUATION_CONDITIONS,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Evaluate two or more named models under single-transform conditions."""
+    specs = validate_model_specs(model_specs)
+    if not 0.0 <= threshold <= 1.0:
+        raise ValueError("threshold must be between 0 and 1")
+    if not conditions or not any(item.name == "clean" for item in conditions):
+        raise ValueError("robustness evaluation requires a clean condition")
+
+    evaluation_device = device or resolve_device("auto")
+    evaluation_title = comparison_title(
+        "Single-transform robustness evaluation",
+        specs,
+    )
+    loaded_models: list[
+        tuple[EvaluationModelSpec, nn.Module, str]
+    ] = []
+    checkpoint_records: list[dict[str, Any]] = []
+    for spec in specs:
+        model, checkpoint_hash = load_model_checkpoint(
+            spec.checkpoint_path,
+            evaluation_device,
+            architecture=spec.architecture,
+        )
+        loaded_models.append((spec, model, checkpoint_hash))
+        checkpoint_records.append({
+            **spec.as_record(),
+            "path": str(spec.checkpoint_path),
+            "sha256": checkpoint_hash,
+        })
+
+    prediction_tables: list[pd.DataFrame] = []
+    metric_rows: list[dict[str, Any]] = []
+    for condition in conditions:
+        pre_transform = build_condition_transform(condition, base_seed=seed)
+        data_loader = get_evaluation_dataloader(
+            data_root=str(data_root),
+            manifest_path=str(manifest_path),
+            split=split,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            pre_transform=pre_transform,
+        )
+        reference_rows: pd.DataFrame | None = None
+        condition_seed = seed if condition.name == "noise" else None
+        for spec, model, checkpoint_hash in loaded_models:
+            print(
+                f"Evaluating {spec.model_title}: "
+                f"{condition.name} severity={condition.severity}"
+            )
+            predictions, metrics = evaluate_model_condition(
+                model,
+                data_loader,
+                evaluation_device,
+                model_id=spec.model_id,
+                threshold=threshold,
+                checkpoint_hash=checkpoint_hash,
+                transform_name=condition.name,
+                severity=condition.severity,
+                seed=condition_seed,
+            )
+            current_rows = predictions[["image_path", "label"]].reset_index(
+                drop=True
+            )
+            if reference_rows is None:
+                reference_rows = current_rows
+            elif not current_rows.equals(reference_rows):
+                raise RuntimeError(
+                    "models were not evaluated on the same images in the "
+                    "same order"
+                )
+            predictions["model_title"] = spec.model_title
+            predictions["architecture_override"] = spec.architecture or "auto"
+            predictions["evaluation_title"] = evaluation_title
+            prediction_tables.append(predictions)
+            metric_rows.append({
+                "model_id": spec.model_id,
+                "model_title": spec.model_title,
+                "architecture_override": spec.architecture or "auto",
+                "evaluation_title": evaluation_title,
+                "checkpoint_hash": checkpoint_hash,
+                "split": split,
+                "transform": condition.name,
+                "severity": condition.severity,
+                "seed": condition_seed,
+                **metrics,
+            })
+
+    loaded_models.clear()
+    if evaluation_device.type == "cuda":
+        torch.cuda.empty_cache()
+
+    combined_predictions = pd.concat(prediction_tables, ignore_index=True)
+    metrics_table = pd.DataFrame(metric_rows)
+    title_by_id = model_titles(specs)
+    comparison_tables = []
+    for reference_spec, candidate_spec in model_pairs(specs):
+        table = build_robustness_comparison(
+            metrics_table,
+            conditions=conditions,
+            model_a_id=reference_spec.model_id,
+            model_b_id=candidate_spec.model_id,
+            model_a_title=reference_spec.model_title,
+            model_b_title=candidate_spec.model_title,
+            evaluation_title=evaluation_title,
+        )
+        table["model_a_title"] = title_by_id[reference_spec.model_id]
+        table["model_b_title"] = title_by_id[candidate_spec.model_id]
+        comparison_tables.append(table)
+    comparison_table = pd.concat(comparison_tables, ignore_index=True)
+
+    destination = Path(output_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+    combined_predictions.to_csv(
+        destination / ROBUSTNESS_FILENAMES["predictions"], index=False
+    )
+    metrics_table.to_csv(
+        destination / ROBUSTNESS_FILENAMES["metrics"], index=False
+    )
+    comparison_table.to_csv(
+        destination / ROBUSTNESS_FILENAMES["comparison"], index=False
+    )
+    run_config = {
+        "mode": "robustness",
+        "evaluation_title": evaluation_title,
+        "data_root": str(data_root),
+        "manifest_path": str(manifest_path),
+        "split": split,
+        "threshold": threshold,
+        "batch_size": batch_size,
+        "num_workers": num_workers,
+        "device": str(evaluation_device),
+        "seed": seed,
+        "preprocessing": "condition before src.data.get_eval_transform",
+        "num_models": len(specs),
+        "num_conditions": len(conditions),
+        "num_images_per_model_condition": int(metric_rows[0]["num_samples"]),
+        "conditions": [
+            {"transform": item.name, "severity": item.severity}
+            for item in conditions
+        ],
+        "models": checkpoint_records,
+        "checkpoints": checkpoint_records,
+        "output_files": ROBUSTNESS_FILENAMES,
+    }
+    with (destination / ROBUSTNESS_FILENAMES["config"]).open(
+        "w", encoding="utf-8"
+    ) as config_file:
+        json.dump(run_config, config_file, indent=2, ensure_ascii=False)
+        config_file.write("\n")
+    return combined_predictions, metrics_table, comparison_table
 
 
 def run_robustness_comparison(
@@ -516,166 +833,33 @@ def run_robustness_comparison(
     conditions: Sequence[EvaluationCondition] = ALL_EVALUATION_CONDITIONS,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Evaluate two named models under all fixed robustness conditions."""
-    if model_a_id == model_b_id:
-        raise ValueError("the two checkpoints must have different model IDs")
-    if not 0.0 <= threshold <= 1.0:
-        raise ValueError("threshold must be between 0 and 1")
-    if not conditions or not any(item.name == "clean" for item in conditions):
-        raise ValueError("robustness evaluation requires a clean condition")
-
-    evaluation_device = device or resolve_device("auto")
-    model_specs = [
-        (
-            model_a_id,
-            Path(checkpoint_a),
-            architecture_a,
-        ),
-        (
-            model_b_id,
-            Path(checkpoint_b),
-            architecture_b,
-        ),
-    ]
-    loaded_models: list[tuple[str, nn.Module, str, Path]] = []
-    checkpoint_records: list[dict[str, str]] = []
-
-    for (
-        model_id,
-        checkpoint_path,
-        architecture,
-    ) in model_specs:
-        model, checkpoint_hash = load_model_checkpoint(
-            checkpoint_path,
-            evaluation_device,
-            architecture=architecture,
-        )
-        loaded_models.append(
-            (model_id, model, checkpoint_hash, checkpoint_path)
-        )
-        checkpoint_records.append({
-            "model_id": model_id,
-            "path": str(checkpoint_path),
-            "sha256": checkpoint_hash,
-        })
-
-    prediction_tables: list[pd.DataFrame] = []
-    metric_rows: list[dict[str, Any]] = []
-
-    for condition in conditions:
-        pre_transform = build_condition_transform(condition, base_seed=seed)
-        data_loader = get_evaluation_dataloader(
-            data_root=str(data_root),
-            manifest_path=str(manifest_path),
-            split=split,
-            batch_size=batch_size,
-            num_workers=num_workers,
-            pre_transform=pre_transform,
-        )
-        reference_rows: pd.DataFrame | None = None
-        condition_seed = seed if condition.name == "noise" else None
-
-        for model_id, model, checkpoint_hash, _ in loaded_models:
-            print(
-                f"Evaluating {model_id}: "
-                f"{condition.name} severity={condition.severity}"
-            )
-            predictions, metrics = evaluate_model_condition(
-                model,
-                data_loader,
-                evaluation_device,
-                model_id=model_id,
-                threshold=threshold,
-                checkpoint_hash=checkpoint_hash,
-                transform_name=condition.name,
-                severity=condition.severity,
-                seed=condition_seed,
-            )
-
-            current_rows = predictions[["image_path", "label"]].reset_index(
-                drop=True
-            )
-            if reference_rows is None:
-                reference_rows = current_rows
-            elif not current_rows.equals(reference_rows):
-                raise RuntimeError(
-                    "models were not evaluated on the same images in the same order"
-                )
-
-            prediction_tables.append(predictions)
-            metric_rows.append({
-                "model_id": model_id,
-                "checkpoint_hash": checkpoint_hash,
-                "split": split,
-                "transform": condition.name,
-                "severity": condition.severity,
-                "seed": condition_seed,
-                **metrics,
-            })
-
-    loaded_models.clear()
-    del model
-    if evaluation_device.type == "cuda":
-        torch.cuda.empty_cache()
-
-    combined_predictions = pd.concat(prediction_tables, ignore_index=True)
-    metrics_table = pd.DataFrame(metric_rows)
-    comparison_table = build_robustness_comparison(
-        metrics_table,
+    specs = build_model_specs(
+        checkpoints=(checkpoint_a, checkpoint_b),
+        model_ids=(model_a_id, model_b_id),
+        model_titles=(model_a_id, model_b_id),
+        architectures=(architecture_a, architecture_b),
+    )
+    return run_robustness_model_specs(
+        data_root=data_root,
+        manifest_path=manifest_path,
+        model_specs=specs,
+        output_dir=output_dir,
+        split=split,
+        threshold=threshold,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        device=device,
+        seed=seed,
         conditions=conditions,
-        model_a_id=model_a_id,
-        model_b_id=model_b_id,
     )
-
-    destination = Path(output_dir)
-    destination.mkdir(parents=True, exist_ok=True)
-    combined_predictions.to_csv(
-        destination / ROBUSTNESS_FILENAMES["predictions"],
-        index=False,
-    )
-    metrics_table.to_csv(
-        destination / ROBUSTNESS_FILENAMES["metrics"],
-        index=False,
-    )
-    comparison_table.to_csv(
-        destination / ROBUSTNESS_FILENAMES["comparison"],
-        index=False,
-    )
-
-    run_config = {
-        "mode": "robustness",
-        "data_root": str(data_root),
-        "manifest_path": str(manifest_path),
-        "split": split,
-        "threshold": threshold,
-        "batch_size": batch_size,
-        "num_workers": num_workers,
-        "device": str(evaluation_device),
-        "seed": seed,
-        "preprocessing": "condition before src.data.get_eval_transform",
-        "num_conditions": len(conditions),
-        "num_images_per_model_condition": int(metric_rows[0]["num_samples"]),
-        "conditions": [
-            {"transform": item.name, "severity": item.severity}
-            for item in conditions
-        ],
-        "checkpoints": checkpoint_records,
-    }
-    with (destination / ROBUSTNESS_FILENAMES["config"]).open(
-        "w",
-        encoding="utf-8",
-    ) as config_file:
-        json.dump(run_config, config_file, indent=2)
-        config_file.write("\n")
-
-    return combined_predictions, metrics_table, comparison_table
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
-    """Build the command-line interface for a two-checkpoint comparison."""
+    """Build the command-line interface for a 2+ checkpoint comparison."""
     parser = argparse.ArgumentParser(
         description=(
-            "Compare two named checkpoints on clean or transformed images. "
-            "Use --model-a-id and --model-b-id to label the two result sets."
+            "Compare two or more named checkpoints on clean or transformed "
+            "images. Use the plural model arguments for variable-length runs."
         ),
     )
     parser.add_argument(
@@ -685,8 +869,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--data-root", required=True)
     parser.add_argument("--manifest", required=True)
-    parser.add_argument("--checkpoint-a", required=True)
-    parser.add_argument("--checkpoint-b", required=True)
+    parser.add_argument("--checkpoint-a")
+    parser.add_argument("--checkpoint-b")
     parser.add_argument(
         "--architecture-a",
         default=None,
@@ -707,6 +891,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--split", choices=["val", "test"], default="val")
     parser.add_argument("--model-a-id", default="experiment_a")
     parser.add_argument("--model-b-id", default="experiment_b")
+    add_variable_model_arguments(parser)
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--num-workers", type=int, default=2)
@@ -723,17 +908,29 @@ def main(argv: Sequence[str] | None = None) -> None:
     """Run the requested comparison from command-line arguments."""
     args = build_argument_parser().parse_args(argv)
     device = resolve_device(args.device)
+    try:
+        specs = variable_model_specs_from_args(args)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+    if specs is None:
+        if args.checkpoint_a is None or args.checkpoint_b is None:
+            raise SystemExit(
+                "provide legacy --checkpoint-a/--checkpoint-b or use "
+                "--checkpoints with --model-ids"
+            )
+        specs = build_model_specs(
+            checkpoints=(args.checkpoint_a, args.checkpoint_b),
+            model_ids=(args.model_a_id, args.model_b_id),
+            model_titles=(args.model_a_id, args.model_b_id),
+            architectures=(args.architecture_a, args.architecture_b),
+        )
+
     common_arguments = {
         "data_root": args.data_root,
         "manifest_path": args.manifest,
-        "checkpoint_a": args.checkpoint_a,
-        "checkpoint_b": args.checkpoint_b,
+        "model_specs": specs,
         "output_dir": args.output_dir,
         "split": args.split,
-        "model_a_id": args.model_a_id,
-        "model_b_id": args.model_b_id,
-        "architecture_a": args.architecture_a,
-        "architecture_b": args.architecture_b,
         "threshold": args.threshold,
         "batch_size": args.batch_size,
         "num_workers": args.num_workers,
@@ -741,12 +938,19 @@ def main(argv: Sequence[str] | None = None) -> None:
     }
 
     if args.mode == "clean":
-        _, metrics_table = run_clean_comparison(**common_arguments)
+        _, metrics_table = run_clean_model_specs(**common_arguments)
         display_table = metrics_table[
-            ["model_id", "num_samples", "accuracy", "f1", "auroc"]
+            [
+                "model_id",
+                "model_title",
+                "num_samples",
+                "accuracy",
+                "f1",
+                "auroc",
+            ]
         ]
     else:
-        _, metrics_table, comparison_table = run_robustness_comparison(
+        _, metrics_table, comparison_table = run_robustness_model_specs(
             **common_arguments,
             seed=args.seed,
         )
@@ -754,23 +958,16 @@ def main(argv: Sequence[str] | None = None) -> None:
             [
                 "transform",
                 "severity",
+                "model_a_id",
+                "model_b_id",
                 "model_a_accuracy",
                 "model_b_accuracy",
                 "b_minus_a_accuracy",
             ]
-        ].rename(columns={
-            "model_a_accuracy": f"{args.model_a_id}_accuracy",
-            "model_b_accuracy": f"{args.model_b_id}_accuracy",
-            "b_minus_a_accuracy": (
-                f"{args.model_b_id}_minus_{args.model_a_id}"
-            ),
-        })
+        ]
 
     print(f"Evaluation device: {device}")
-    print(
-        f"Comparison: {args.model_a_id} (first checkpoint) vs "
-        f"{args.model_b_id} (second checkpoint)"
-    )
+    print("Models: " + " vs ".join(spec.model_title for spec in specs))
     print(f"Results written to: {Path(args.output_dir)}")
     print(display_table)
 
