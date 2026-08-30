@@ -227,8 +227,9 @@ def checkpoint_sha256(checkpoint_path: str | Path) -> str:
 def load_model_checkpoint(
     checkpoint_path: str | Path,
     device: torch.device,
+    architecture: str | None = None,
 ) -> tuple[nn.Module, str]:
-    """Build EfficientNet-B0 and load one raw model state dictionary."""
+    """Load a checkpoint using saved or explicitly supplied architecture."""
     path = Path(checkpoint_path)
     checkpoint_hash = checkpoint_sha256(path)
 
@@ -236,24 +237,61 @@ def load_model_checkpoint(
         checkpoint_data = torch.load(
             path,
             map_location="cpu",
-            weights_only=False, # Must be False to load dictionaries/optimizer states
+            weights_only=False,
         )
-        # Safely pull out model_state if it's a dict, otherwise fallback to old behavior
-        state_dict = checkpoint_data.get("model_state", checkpoint_data) if isinstance(checkpoint_data, dict) else checkpoint_data
     except Exception as error:
-        raise ValueError(f"could not safely load checkpoint: {path}") from error
+        raise ValueError(
+            f"could not safely load checkpoint: {path}"
+        ) from error
+
+    if isinstance(checkpoint_data, Mapping):
+        checkpoint_architecture = checkpoint_data.get(
+            "architecture"
+        )
+        state_dict = checkpoint_data.get(
+            "model_state",
+            checkpoint_data,
+        )
+    else:
+        checkpoint_architecture = None
+        state_dict = checkpoint_data
 
     if not isinstance(state_dict, Mapping):
         raise ValueError(
             f"checkpoint must contain a model state dictionary: {path}"
         )
 
-    model = build_model(pretrained=False)
+    if (
+        checkpoint_architecture is not None
+        and architecture is not None
+        and checkpoint_architecture != architecture
+    ):
+        raise ValueError(
+            "Checkpoint architecture "
+            f"'{checkpoint_architecture}' conflicts with "
+            f"requested architecture '{architecture}'."
+        )
+
+    resolved_architecture = (
+        checkpoint_architecture
+        or architecture
+        or "efficientnet_b0"
+    )
+
+    model = build_model(
+        pretrained=False,
+        architecture=resolved_architecture,
+    )
+
     try:
-        model.load_state_dict(state_dict, strict=True)
+        model.load_state_dict(
+            state_dict,
+            strict=True,
+        )
     except RuntimeError as error:
         raise ValueError(
-            f"checkpoint does not match the EfficientNet-B0 detector: {path}"
+            "checkpoint does not match architecture "
+            f"'{resolved_architecture}': {path}"
         ) from error
 
     return model.to(device), checkpoint_hash
@@ -281,6 +319,8 @@ def run_clean_comparison(
     threshold: float = 0.5,
     batch_size: int = 32,
     num_workers: int = 2,
+    architecture_a: str | None = None,
+    architecture_b: str | None = None,
     device: torch.device | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Evaluate two named checkpoints fairly on one clean manifest split."""
@@ -299,18 +339,31 @@ def run_clean_comparison(
     )
 
     model_specs = [
-        (model_a_id, Path(checkpoint_a)),
-        (model_b_id, Path(checkpoint_b)),
+        (
+            model_a_id,
+            Path(checkpoint_a),
+            architecture_a,
+        ),
+        (
+            model_b_id,
+            Path(checkpoint_b),
+            architecture_b,
+        ),
     ]
     prediction_tables: list[pd.DataFrame] = []
     metric_rows: list[dict[str, Any]] = []
     checkpoint_records: list[dict[str, str]] = []
     reference_rows: pd.DataFrame | None = None
 
-    for model_id, checkpoint_path in model_specs:
+    for (
+        model_id,
+        checkpoint_path,
+        architecture,
+    ) in model_specs:
         model, checkpoint_hash = load_model_checkpoint(
             checkpoint_path,
             evaluation_device,
+            architecture=architecture,
         )
         predictions, metrics = evaluate_clean_model(
             model,
@@ -456,6 +509,8 @@ def run_robustness_comparison(
     threshold: float = 0.5,
     batch_size: int = 32,
     num_workers: int = 2,
+    architecture_a: str | None = None,
+    architecture_b: str | None = None,
     device: torch.device | None = None,
     seed: int = 42,
     conditions: Sequence[EvaluationCondition] = ALL_EVALUATION_CONDITIONS,
@@ -470,16 +525,29 @@ def run_robustness_comparison(
 
     evaluation_device = device or resolve_device("auto")
     model_specs = [
-        (model_a_id, Path(checkpoint_a)),
-        (model_b_id, Path(checkpoint_b)),
+        (
+            model_a_id,
+            Path(checkpoint_a),
+            architecture_a,
+        ),
+        (
+            model_b_id,
+            Path(checkpoint_b),
+            architecture_b,
+        ),
     ]
     loaded_models: list[tuple[str, nn.Module, str, Path]] = []
     checkpoint_records: list[dict[str, str]] = []
 
-    for model_id, checkpoint_path in model_specs:
+    for (
+        model_id,
+        checkpoint_path,
+        architecture,
+    ) in model_specs:
         model, checkpoint_hash = load_model_checkpoint(
             checkpoint_path,
             evaluation_device,
+            architecture=architecture,
         )
         loaded_models.append(
             (model_id, model, checkpoint_hash, checkpoint_path)
@@ -619,6 +687,22 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--checkpoint-a", required=True)
     parser.add_argument("--checkpoint-b", required=True)
+    parser.add_argument(
+        "--architecture-a",
+        default=None,
+        help=(
+            "Architecture override for checkpoint A "
+            "when checkpoint metadata is unavailable."
+        ),
+    )
+    parser.add_argument(
+        "--architecture-b",
+        default=None,
+        help=(
+            "Architecture override for checkpoint B "
+            "when checkpoint metadata is unavailable."
+        ),
+    )
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--split", choices=["val", "test"], default="val")
     parser.add_argument("--model-a-id", default="experiment_a")
@@ -648,6 +732,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         "split": args.split,
         "model_a_id": args.model_a_id,
         "model_b_id": args.model_b_id,
+        "architecture_a": args.architecture_a,
+        "architecture_b": args.architecture_b,
         "threshold": args.threshold,
         "batch_size": args.batch_size,
         "num_workers": args.num_workers,
