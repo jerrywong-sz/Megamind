@@ -77,6 +77,38 @@ images AI-generated. The trade is strongly favourable overall, but it moves in
 the direction the challenge warns about — false accusations against genuine
 photographs — and we did not tune the threshold to compensate.
 
+### Beyond CIFAKE: SID_Set and the architecture choice
+
+We also trained and evaluated on **SID_Set** — high-resolution images from a
+different generator (FLUX). Three robustness-trained architectures were run
+across the same 16-condition grid on the SID validation split: 5,099 images
+per condition, threshold 0.5, seed 42, checkpoint SHA-256 hashes recorded.
+
+| Model | Clean acc. | Mean damaged acc. | Worst damaged acc. | Latency |
+|---|---:|---:|---:|---:|
+| EfficientNet-B0 | 99.78% | 99.73% | 99.43% (noise 0.10) | 1.14 ms |
+| ConvNeXt-Tiny | 99.80% | 99.78% | 99.45% (noise 0.10) | 4.12 ms |
+| DINOv2 ViT-S/14 | 97.35% | 96.26% | 85.23% (crop 0.80) | 4.34 ms |
+
+**ConvNeXt-Tiny came out marginally ahead and we did not choose it.** Its lead
+is 0.05 percentage points of mean damaged accuracy, for **3.6× the inference
+cost** (4.12 ms against 1.14 ms per image). A paired McNemar comparison across
+all 16 conditions finds **no condition reaching p < 0.05** — the smallest
+p-value is 0.093 — so on 5,099 images per condition the two models are
+statistically indistinguishable. EfficientNet-B0 is the better trade-off and
+stays as the working architecture; ConvNeXt-Tiny is retained as a candidate
+for a later cross-generator comparison rather than discarded.
+
+**DINOv2 ViT-S/14 is dropped.** Under crop 0.8 it falls **12 points below its
+own clean accuracy** (85.23% against 97.35%), fails again under colour +0.2
+(92.14%), and is the slowest of the three.
+
+**What SID does not show.** All three SID models are robustness-trained
+variants — there is no SID clean baseline. SID therefore demonstrates that
+robustness-trained detectors hold up on high-resolution FLUX images, and that
+the architecture choice barely matters; it does *not* reproduce the A→B gap.
+A clean-trained SID model might hold up equally well. We have not tested it.
+
 ## A negative result: consistency training did not help
 
 Experiment C is reported as a **negative result**.
@@ -119,8 +151,16 @@ the model; training uses `BCEWithLogitsLoss`.
   classifier, hence 4.0M here.)
 - **No external APIs.** All inference runs locally from a checkpoint file.
 
-One backbone is shared across all three experiments so the ablation isolates
-training method rather than architecture.
+One backbone is shared across all three CIFAKE experiments, so that ablation
+isolates training method rather than architecture.
+
+Two further backbones were trained on SID_Set for the architecture comparison,
+each with the same single-logit head: **ConvNeXt-Tiny** (torchvision,
+27,820,897 parameters) and **DINOv2 ViT-S/14** (loaded via `torch.hub` from
+`facebookresearch/dinov2`, fine-tuned end to end with a linear head on its
+embedding output). DINOv2 was dropped on the results above. Every model is
+orders of magnitude below the 2B parameter limit, and all inference is
+local.
 
 ## 4. Libraries and frameworks
 
@@ -147,12 +187,15 @@ the exact challenge parameter values are reproduced rather than approximated.
 ## 5. Datasets
 
 - **CIFAKE** (Kaggle) — 32×32 images, Stable Diffusion 1.4 as the generator.
-  **All results reported above come from CIFAKE**: 68,712 training images and
-  14,724 validation images after 50/50 class balancing and a 70/15/15 split.
+  68,712 training images and 14,724 validation images after 50/50 class
+  balancing and a 70/15/15 split. **The A/B/C ablation — and therefore the
+  headline transformation-flip result — comes entirely from CIFAKE.**
 - **SID_Set** (Hugging Face, CC BY 4.0) — ~300K images generated with FLUX,
   including a tampered class (real photographs with an AI-generated region
-  inserted). **Training on SID_Set is in progress and is not reflected in any
-  number in this submission.** Its tampered images are routed to a dedicated
+  inserted). **SID_Set results are included in this submission**: three
+  robustness-trained architectures evaluated across the 16-condition grid on
+  5,099 validation images per condition, reported above. No clean-trained SID
+  baseline exists yet. Its tampered images are routed to a dedicated
   `bonus` split and are excluded from binary training and evaluation, because a
   tampered image is mostly authentic pixels and training on it as "AI" risks
   pushing the model toward false positives on genuine photographs.
@@ -169,10 +212,16 @@ stripped) before training, and SHA-256 de-duplicated.
 
 We would rather state these than have a judge find them.
 
-1. **Everything reported is CIFAKE only** — 32×32 images, one generator (SD 1.4),
-   one validation split. We have **no evidence** about high-resolution images or
-   unseen generators. The robustness claim is "robust to transformations *within*
-   CIFAKE", not "robust in general".
+1. **The robustness gain itself is demonstrated on CIFAKE only.** SID_Set
+   results do exist for robustness-trained models — EfficientNet-B0 reaches
+   99.78% clean and 99.73% mean accuracy under damage across 5,099 validation
+   images per condition — but there is **no SID clean baseline**, so the A→B
+   comparison has never been run on high-resolution data. A clean-trained SID
+   model might hold up equally well under damage; we have not tested it. Until
+   that baseline exists, the claim "augmentation is what produces the
+   robustness" rests on CIFAKE alone: 32×32 images, one generator (SD 1.4),
+   one validation split. Neither dataset says anything about **unseen**
+   generators.
 2. **Consistency training produced no measurable improvement** (above).
 3. **The robustness gain costs clean-set precision** — false-positive rate rises
    from 1.97% to 2.69%.
@@ -196,8 +245,9 @@ We would rather state these than have a judge find them.
    for `BCEWithLogitsLoss`, so a 3-class row would need explicit handling. The
    quarantine works; the analysis it enables is future work.
 
-**With more time, in priority order:** finish training on SID_Set for
-high-resolution and second-generator coverage; run the held-out WildFake
+**With more time, in priority order:** train a clean-baseline SID model and
+run it through the same 16-condition grid, which is the one experiment that
+would carry the robustness claim beyond CIFAKE; run the held-out WildFake
 benchmark for a real cross-generator number, which is our largest unknown;
 inspect the 40 persistent failures for label noise; tune the decision threshold
 to claw back the false-positive rate; and re-run the A/B/C ablation across

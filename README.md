@@ -452,11 +452,111 @@ produces the checkpoint we're submitting.
 
 ## Results tables
 
-> **Scope of every result below:** all of it was trained and evaluated on
-> **CIFAKE** only — 32×32 images, **Stable Diffusion 1.4** as the sole
-> generator. None of it touches **SID_Set** yet. These numbers say nothing
-> about performance on high-resolution images or on generators the model
-> hasn't seen — that generalization is untested.
+> **Scope note:** the results below come from two datasets and answer two
+> different questions. **SID_Set** (high-resolution, FLUX generator) carries
+> the architecture comparison — but every SID model is robustness-trained,
+> so the A→B robustness gain is *not* demonstrated there. **CIFAKE** (32×32,
+> Stable Diffusion 1.4) is the only place the A→B→C ablation exists. Neither
+> dataset says anything about generators the models have never seen; the
+> WildFake cross-generator benchmark is still held out and unrun.
+
+### SID_Set results — architecture comparison
+
+Three robustness-trained models evaluated on the **SID validation split**:
+5,099 images per condition, 16 conditions (clean plus 15 isolated damages),
+decision threshold 0.5, seed 42. Checkpoint SHA-256 hashes for all three are
+recorded in [results/sid/run_config.json](results/sid/run_config.json), and
+the full per-condition metrics — confusion matrices, precision, recall, F1,
+AUPRC, Brier score — are in
+[results/sid/basic_robustness_metrics.csv](results/sid/basic_robustness_metrics.csv).
+
+#### Model comparison
+
+| Model | `model_id` | Clean acc. | Mean damaged acc. | Worst damaged acc. | Mean damaged AUROC | Latency |
+|---|---|---:|---:|---:|---:|---:|
+| EfficientNet-B0 | `effnet_sid_b` | 99.78% | 99.73% | 99.43% (noise 0.1) | 0.99989 | 1.14 ms |
+| ConvNeXt-Tiny | `convnext_sid_b` | 99.80% | 99.78% | 99.45% (noise 0.1) | 0.99996 | 4.12 ms |
+| DINOv2 ViT-S/14 | `dino_sid_b` | 97.35% | 96.26% | 85.23% (crop 0.8) | 0.99373 | 4.34 ms |
+
+"Mean damaged" and "worst damaged" are computed across the 15 damaged
+conditions, excluding clean; the worst condition for each model is named in
+brackets. Latency is mean milliseconds per image as measured during this
+evaluation run. Source:
+[results/sid/model_summary.csv](results/sid/model_summary.csv).
+
+#### Per-condition accuracy
+
+| Condition | EfficientNet-B0 | ConvNeXt-Tiny | DINOv2 ViT-S/14 |
+|---|---:|---:|---:|
+| clean | 99.78% | 99.80% | 97.35% |
+| jpeg 90 | 99.78% | 99.80% | 97.35% |
+| jpeg 70 | 99.75% | 99.84% | 97.53% |
+| jpeg 50 | 99.75% | 99.86% | 97.35% |
+| jpeg 30 | 99.75% | 99.84% | 97.49% |
+| blur 0.5 | 99.80% | 99.80% | 97.39% |
+| blur 1 | 99.82% | 99.86% | 97.51% |
+| blur 2 | 99.76% | 99.86% | 97.22% |
+| resize 0.5 | 99.82% | 99.86% | 97.41% |
+| resize 0.25 | 99.76% | 99.86% | 97.49% |
+| noise 0.02 | 99.84% | 99.75% | 97.43% |
+| noise 0.05 | 99.63% | 99.55% | 97.49% |
+| noise 0.1 | 99.43% | 99.45% | 97.43% |
+| colour -0.2 | 99.71% | 99.76% | 97.43% |
+| colour 0.2 | 99.59% | 99.76% | 92.14% |
+| crop 0.8 | 99.78% | 99.78% | 85.23% |
+
+Source: [results/sid/accuracy_table.csv](results/sid/accuracy_table.csv);
+the matching per-condition AUROC table is
+[results/sid/auroc_table.csv](results/sid/auroc_table.csv).
+
+One artifact worth naming: `jpeg 90` reproduces the clean confusion matrix
+exactly for all three models. The manifest already stores every image as
+JPEG quality 95, so re-encoding at quality 90 moves no image across the
+threshold. AUROC does shift very slightly, so the transform is genuinely
+being applied — it simply is not damage at this severity.
+
+#### Architecture finding: EfficientNet-B0 is the better trade-off
+
+ConvNeXt-Tiny is the numerically strongest model, but the margin is **0.05
+percentage points** of mean damaged accuracy (99.78% against EfficientNet's
+99.73%) and it costs **3.6× the inference time** — 4.12 ms versus 1.14 ms
+per image.
+
+The paired analysis in
+[results/sid/effnet_vs_convnext_paired_analysis.csv](results/sid/effnet_vs_convnext_paired_analysis.csv)
+shows that margin is not statistically significant. ConvNeXt wins 12 of the
+16 conditions, EfficientNet wins 2, and 2 are tied; ConvNeXt is uniquely
+correct on 170 images against EfficientNet's 134. But **no individual
+condition reaches McNemar exact p < 0.05** — the smallest p-value across all
+16 is 0.093, at colour +0.2. On 5,099 images per condition, a gap this small
+is indistinguishable from noise.
+
+We therefore keep **EfficientNet-B0** as the working architecture: it is
+statistically indistinguishable from ConvNeXt-Tiny on this evaluation while
+running 3.6× faster. ConvNeXt-Tiny is retained as a candidate for a later
+cross-domain comparison rather than discarded — an architecture difference
+that does not show up here might still show up on unseen generators.
+
+**DINOv2 ViT-S/14 is dropped.** It reaches 96.26% mean damaged accuracy
+against roughly 99.7% for the other two, and it fails specifically where
+they do not: 92.14% under colour +0.2 and **85.23% under crop 0.8**, a
+12-point fall from its own clean accuracy. It is also the slowest of the
+three at 4.34 ms per image. Full reasoning is in
+[results/sid/architecture_selection_notes.txt](results/sid/architecture_selection_notes.txt).
+
+#### The missing piece: there is no SID clean baseline
+
+All three SID models above are **robustness-trained variants**. No
+clean-trained SID model exists, so **the A→B robustness gain that our CIFAKE
+results demonstrate has not been reproduced on SID_Set.**
+
+These tables establish that robustness-trained models hold up under damage
+on high-resolution FLUX images, and that the choice between EfficientNet-B0
+and ConvNeXt-Tiny does not matter much. They do **not** establish that the
+robustness augmentation is what made them hold up — a clean-trained SID
+model might do just as well. Settling that requires training a SID clean
+baseline and running it through this same 16-condition grid. It is the
+single most valuable experiment still outstanding.
 
 ### Clean validation — Experiments A and B
 
@@ -641,15 +741,18 @@ Every figure below comes from
 [results/error_analysis.md](results/error_analysis.md) and the CSVs in
 `results/`.
 
-**Everything was trained and evaluated on CIFAKE alone.** That means 32×32
-images with Stable Diffusion 1.4 as the only generator, on a single
-validation split of 14,724 images. We have **no evidence** about
-high-resolution images or about generators the model never saw. SID_Set was
-obtained but never trained on, and the WildFake cross-generator benchmark
-was never run. Our robustness claim is therefore "robust to
-transformations *within* CIFAKE", not "robust in general" — the headline
-accuracies would very likely not survive a change of generator or
-resolution.
+**The central claim is demonstrated on CIFAKE alone.** We do now have
+SID_Set results — high-resolution images from the FLUX generator, in the
+tables above — but all three SID models are robustness-trained, with no SID
+clean baseline to compare them against. SID therefore shows that
+robustness-trained models hold up under damage; it does not show that the
+augmentation is what made them hold up. The A→B robustness gain, which is
+our central claim, rests entirely on CIFAKE: 32×32 images, Stable Diffusion
+1.4 as the only generator, one validation split of 14,724 images, one seed.
+The WildFake cross-generator benchmark was never run, so for generators
+neither dataset contains we have **no evidence at all**. Our claim is
+"robust to transformations *within* the datasets we trained on", not "robust
+in general".
 
 **Consistency training (Experiment C) produced no measurable improvement.**
 Across the 16 single-transform conditions, C beat B in 9 and lost in 7,

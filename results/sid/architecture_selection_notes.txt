@@ -1,0 +1,59 @@
+SID-B BASIC ROBUSTNESS ARCHITECTURE ANALYSIS
+
+Models
+------
+EfficientNet-B0 SID-B
+ConvNeXt-Tiny SID-B
+DINOv2 ViT-S/14 SID-B
+
+Evaluation
+----------
+Dataset: SID validation
+Images per condition: 5,099
+Conditions: clean + 15 isolated robustness damages
+Threshold: 0.5
+Seed: 42
+
+Main Findings
+-------------
+1. ConvNeXt-Tiny obtained the highest numerical SID
+   robustness result.
+
+2. EfficientNet-B0 was extremely close to ConvNeXt.
+
+3. Paired EffNet vs ConvNeXt comparison:
+   - ConvNeXt-only correct: 170
+   - EffNet-only correct: 134
+   - Both wrong: 46
+   - ConvNeXt won 12/16 conditions
+   - EffNet won 2/16
+   - 2/16 tied
+   - No individual condition had exact McNemar p < 0.05.
+
+4. Mean measured inference latency:
+   - EfficientNet-B0: approximately 1.14 ms/image
+   - ConvNeXt-Tiny: approximately 4.12 ms/image
+   - DINOv2: approximately 4.34 ms/image
+
+5. DINOv2 was substantially weaker, particularly:
+   - colour +0.20: ~92.14% accuracy
+   - crop 0.80: ~85.23% accuracy
+
+Current Interpretation
+----------------------
+Raw SID robustness winner:
+ConvNeXt-Tiny
+
+Best current efficiency/performance trade-off:
+EfficientNet-B0
+
+DINOv2:
+Remove from primary architecture shortlist.
+
+ConvNeXt should not yet be declared the final architecture.
+Its robustness advantage over EfficientNet is small relative
+to its substantially higher inference cost.
+
+The next decisive comparison should focus on generalisation /
+cross-domain performance after the model-selection protocol
+is agreed.

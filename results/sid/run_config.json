@@ -1,0 +1,110 @@
+{
+  "dataset": "SID",
+  "split": "val",
+  "seed": 42,
+  "batch_size": 64,
+  "num_workers": 4,
+  "threshold": 0.5,
+  "checkpoints": [
+    {
+      "model_id": "effnet_sid_b",
+      "checkpoint": "/kaggle/input/datasets/seryizhe/sid-b-diff-model/experiment_sid_b_robust_best.pt",
+      "architecture": "efficientnet_b0",
+      "sha256": "918083148a04149dd2209ae21810aa4279583e57f687b4b63d9300a5aae64d55"
+    },
+    {
+      "model_id": "convnext_sid_b",
+      "checkpoint": "/kaggle/working/experiment_sid_convnext_robust_best.pt",
+      "architecture": "convnext_tiny",
+      "sha256": "758444e568d117bba2345df8ce705ea0cce77da31fe58a9a266732eb97764bef"
+    },
+    {
+      "model_id": "dino_sid_b",
+      "checkpoint": "/kaggle/working/experiment_sid_dinov2_robust_best.pt",
+      "architecture": "dinov2_vits14",
+      "sha256": "71bb0fc142b8cb9f19902eb3f8a8c374ad787a755b697c8b5dd1d271d81d01fd"
+    }
+  ],
+  "conditions": [
+    {
+      "condition_id": "clean",
+      "transform": "clean",
+      "severity": null
+    },
+    {
+      "condition_id": "jpeg_90",
+      "transform": "jpeg",
+      "severity": 90
+    },
+    {
+      "condition_id": "jpeg_70",
+      "transform": "jpeg",
+      "severity": 70
+    },
+    {
+      "condition_id": "jpeg_50",
+      "transform": "jpeg",
+      "severity": 50
+    },
+    {
+      "condition_id": "jpeg_30",
+      "transform": "jpeg",
+      "severity": 30
+    },
+    {
+      "condition_id": "blur_0.5",
+      "transform": "blur",
+      "severity": 0.5
+    },
+    {
+      "condition_id": "blur_1",
+      "transform": "blur",
+      "severity": 1.0
+    },
+    {
+      "condition_id": "blur_2",
+      "transform": "blur",
+      "severity": 2.0
+    },
+    {
+      "condition_id": "resize_0.5",
+      "transform": "resize",
+      "severity": 0.5
+    },
+    {
+      "condition_id": "resize_0.25",
+      "transform": "resize",
+      "severity": 0.25
+    },
+    {
+      "condition_id": "noise_0.02",
+      "transform": "noise",
+      "severity": 0.02
+    },
+    {
+      "condition_id": "noise_0.05",
+      "transform": "noise",
+      "severity": 0.05
+    },
+    {
+      "condition_id": "noise_0.1",
+      "transform": "noise",
+      "severity": 0.1
+    },
+    {
+      "condition_id": "colour_-0.2",
+      "transform": "colour",
+      "severity": -0.2
+    },
+    {
+      "condition_id": "colour_0.2",
+      "transform": "colour",
+      "severity": 0.2
+    },
+    {
+      "condition_id": "crop_0.8",
+      "transform": "crop",
+      "severity": 0.8
+    }
+  ]
+}

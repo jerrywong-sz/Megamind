@@ -1,0 +1,29 @@
+{
+  "evaluation": "SID validation basic single-damage robustness comparison",
+  "models": [
+    "effnet_sid_b",
+    "convnext_sid_b",
+    "dino_sid_b"
+  ],
+  "num_conditions": 16,
+  "num_images_per_condition": 5099,
+  "paired_effnet_vs_convnext": {
+    "effnet_only_correct_total": 134,
+    "convnext_only_correct_total": 170,
+    "conditions_convnext_wins": 12,
+    "conditions_effnet_wins": 2,
+    "conditions_tied": 2,
+    "individual_conditions_p_lt_0_05": 0
+  },
+  "mean_latency_ms": {
+    "convnext_sid_b": 4.122746495893818,
+    "dino_sid_b": 4.340246896498901,
+    "effnet_sid_b": 1.1414232636181565
+  },
+  "conclusion": {
+    "raw_sid_robustness_winner": "convnext_sid_b",
+    "best_efficiency_performance_tradeoff": "effnet_sid_b",
+    "dino_status": "drop_from_primary_shortlist",
+    "recommendation": "Retain EfficientNet-B0 and ConvNeXt-Tiny for later generalisation comparison. EfficientNet-B0 is currently the strongest practical candidate because ConvNeXt's SID robustness advantage is very small while its measured inference latency is substantially higher."
+  }
+}
