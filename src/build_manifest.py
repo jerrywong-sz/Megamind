@@ -21,8 +21,7 @@ def process_and_resave_image(img_path, output_dir, relative_path):
             img_rgb = img.convert('RGB') # Strip alpha channels
             
             # Save standardized JPEG to the new output directory
-            save_path = Path(output_dir) / relative_path
-            save_path.with_suffix('.jpg') # Force .jpg extension
+            save_path = (Path(output_dir) / relative_path).with_suffix('.jpg')
             save_path.parent.mkdir(parents=True, exist_ok=True)
             
             # This is the magic line that destroys format bias!
