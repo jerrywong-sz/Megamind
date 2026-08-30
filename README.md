@@ -469,6 +469,13 @@ isn't.
 
 ### Robustness evaluation — Experiment A vs. Experiment B
 
+![Accuracy under increasing transformation severity: six panels (JPEG, blur,
+resize, noise, colour jitter, crop) each starting from the clean baseline. The
+clean baseline collapses toward chance under blur, resize and noise, while the
+augmented model stays above 91% throughout.](results/robustness_curves.png)
+
+Regenerate with `python scripts/plot_robustness.py`.
+
 Source: `results/robustness_comparison_a_vs_b.csv` (accuracy, per-condition)
 and `results/robustness_metrics_a_b.csv` (AUROC and other per-condition
 metrics).
@@ -682,5 +689,25 @@ C could actually be called significant or not.
 
 ## Team member contributions
 
-TODO: list each team member and what they owned (model/training, data
-pipeline, inference/integration, evaluation, etc.).
+**Isaac — Model Lead.** Owned the model architecture and training pipeline,
+and conducted Experiments A/B/C covering clean training, robustness
+augmentation, and consistency training. Main contributions include
+`train.py`, the model definition in `src/models.py`, the consistency loss in
+`src/losses.py`, the experiment configs in `configs/`, and the
+experiment/checkpoint workflow.
+
+**Jerry — Integration Lead.** Repo setup and initial structure; the
+inference pipeline (`predict.py`) and its smoke tests; the shared
+evaluation-time preprocessing (`get_eval_transform()` in `src/data.py`,
+the single source of truth that keeps training and inference from
+drifting apart) and the `build_model()` interface that `predict.py` and
+`evaluate.py` both consume; error analysis (`scripts/error_analysis.py`,
+`results/error_analysis.md`) and the robustness severity curves
+(`scripts/plot_robustness.py`); and the README, reproduction steps, and
+design-decision notes in `results/decisions.md`.
+
+**Keyi — Data Lead.** TODO
+
+**Wei Jien — Evaluation Lead.** TODO
+
+**Michelle — Robustness Lead.** TODO
