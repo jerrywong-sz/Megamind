@@ -94,10 +94,7 @@ photographs — exactly what the challenge warns against. Tampered images
 are held back for separate analysis instead of being folded into the main
 real/fake split.
 
-**Open question — which split value.** The original intent was a
-dedicated `bonus` split, keeping tampered rows clearly separate from
-every binary split. The current code assigns `split_override = "test"`
-instead, which places tampered rows in the same split as binary test
-rows — meaning a plain `split == "test"` filter would silently mix
-3-class tampered data into a binary test set. This is under discussion
-and not yet settled.
+**Settled: the split value is `bonus`.** Tampered rows are assigned
+`split_override = "bonus"`, a value none of the binary splits use, so
+`train`/`val`/`test` stay purely binary and a `split == "test"` filter
+cannot pick up 3-class rows.

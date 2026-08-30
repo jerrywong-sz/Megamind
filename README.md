@@ -53,6 +53,13 @@ Options:
   **not a real detector output**
 - `--output` (required) — path to write the output JSON to
 - `--batch_size` (optional, default `32`) — images per inference batch
+- `--architecture` (optional) — which backbone to build (`efficientnet_b0`
+  or `convnext_tiny`). **Normally unnecessary:** checkpoints written by
+  `train.py` record their own architecture, and that recorded value is used.
+  This flag supplies the architecture for older checkpoints saved before
+  that metadata existed; if the checkpoint does record one and you pass a
+  different value, `predict.py` raises rather than guessing. With neither a
+  recorded value nor this flag, it falls back to `efficientnet_b0`
 - `--include-label` (optional, off by default) — adds a `predicted_label`
   key (`0`/`1`) to each row. **Leave this off for submission** — the
   required output format is exactly `image_path` + `pred`
@@ -162,12 +169,10 @@ What it does:
 - Balances `REAL`/`FAKE` 50/50 and splits them 70/15/15 into
   train/val/test.
 - Holds `TAMPERED` rows out of that balancing and out of the 70/15/15
-  split. ⚠️ They are then assigned `split = "test"`, which is the **same
-  value the binary test rows get** — so filtering on `split == "test"`
-  alone returns a mix of binary and 3-class tampered rows. Filter on
-  `label` as well (`label` is `0.0`/`1.0` for binary, `2.0` for tampered).
-  See [results/decisions.md](results/decisions.md) — a dedicated `bonus`
-  value was the intent and this is still open.
+  split, assigning them `split = "bonus"` — a value the binary splits never
+  use, so `train`/`val`/`test` stay purely binary and a
+  `split == "test"` filter cannot pick up 3-class rows. See
+  [results/decisions.md](results/decisions.md).
 - Writes `image_path` as the path of the **re-saved** file relative to
   `--output_dir`. Note the re-saved file keeps its **original extension**
   even though its bytes are JPEG — a `.png` input stays named `.png`.
@@ -433,6 +438,15 @@ python predict.py --input_dir <path_to_test_images> --checkpoint <path_to_checkp
 (identical command on Windows PowerShell and Mac/Linux; just make sure the
 venv from step 1 is active)
 
+Checkpoints written by `train.py` record which backbone they were trained
+with, so the command above works for both EfficientNet-B0 and ConvNeXt-Tiny
+without being told which is which. Only for a checkpoint saved before that
+metadata existed do you need to name the architecture explicitly:
+
+```bash
+python predict.py --input_dir <path_to_test_images> --checkpoint <legacy_checkpoint.pt> --architecture convnext_tiny --output results/preds.json
+```
+
 TODO: fill in the real `--checkpoint` path once an experiment (A/B/C — TBD)
 produces the checkpoint we're submitting.
 
@@ -693,14 +707,33 @@ are, and images A scores below 0.1 are still AI 11.9% of the time. So B's
 A's are not. (Measured across all 16 conditions, so A's figure is dragged
 down substantially by the conditions where it collapses.)
 
-**A known data-pipeline defect is still open.** `src/build_manifest.py`
-assigns tampered SID_Set images `split = "test"` rather than a dedicated
-`bonus` value, so a naive `split == "test"` filter silently mixes 3-class
-tampered rows into a binary evaluation. On a representative fixture the
-`test` split came out majority-tampered. Nothing in our reported results is
-affected — they are all CIFAKE, which has no tampered images — but this
-would corrupt the first SID_Set evaluation anyone runs. See
-[results/decisions.md](results/decisions.md).
+**The tampered holdout is correctly quarantined, but the analysis it
+enables has never been run.** `src/build_manifest.py` routes tampered
+SID_Set images (label `2.0`) to a dedicated `bonus` split, and
+`get_evaluation_dataloader()` accepts that split, so the data is reachable
+in principle. Nothing consumes it, though: `get_dataloaders()` builds only
+`train` and `val`, and all three evaluation entry points (`evaluate.py`,
+`evaluate_fixed_robustness_abc.py`, `evaluate_random_robustness_abc.py`)
+restrict `--split` to `val` or `test`, so **no runnable command currently
+targets the bonus split** and no bonus results exist under `results/`.
+Labels are emitted as float32 for `BCEWithLogitsLoss`, so a `2.0` row would
+also need explicit handling before any binary metric could be computed on
+it. The quarantine is working as designed — no tampered data can leak into
+binary training or evaluation — but the separate tampered analysis remains
+future work. See [results/decisions.md](results/decisions.md).
+
+**Checkpoint loading is not hardened against untrusted files.** Both
+`predict.py` and `evaluate.py` call
+`torch.load(..., weights_only=False)`, which permits arbitrary code
+execution during unpickling. It is set that way so the loader can read the
+`architecture` string stored alongside the weights, which
+`weights_only=True` would reject. This is safe for checkpoints we produced
+ourselves, but it means **neither script should be pointed at a checkpoint
+from an untrusted source.** With more time we would either register the
+needed types via `torch.serialization.add_safe_globals` and restore
+`weights_only=True`, or store the architecture metadata outside the pickle
+(a sidecar JSON, or the checkpoint filename) so the weights can be loaded
+under the safe path.
 
 **What we'd do with more time.** In priority order: retrain on SID_Set so
 the detector sees high-resolution images and a second generator; run the
@@ -731,8 +764,38 @@ drifting apart) and the `build_model()` interface that `predict.py` and
 (`scripts/plot_robustness.py`); and the README, reproduction steps, and
 design-decision notes in `results/decisions.md`.
 
-**Keyi — Data Lead.** TODO
+**Teoh Ke Yi — Data and Infrastructure Lead.** Prepared and published the
+datasets the project runs on — CIFAKE (120,000 images; 100,000 train /
+20,000 test) and SID_Set (35,000 images), both formatted and uploaded to
+Kaggle — and established the tampered-image holdout that keeps 3-class data
+out of binary training and evaluation. Owned the data pipeline end to end:
+`src/build_manifest.py` (JPEG standardization to remove format bias,
+SHA-256 de-duplication, 50/50 class balancing, and the
+train/val/test/`bonus` split) and `src/data.py` (manifest-backed dataset
+and split handling, aspect-ratio-preserving resize in the evaluation
+transform, and `worker_init_fn` seeding so DataLoader workers do not draw
+identical augmentations). Also contributed across the training and
+inference paths: `configs/consistency.yaml` and the consistency
+lambda-tuning wiring in `train.py`, epoch and optimizer state in
+checkpoints for resumability, the mean / worst-case AUROC and
+robustness-gap reporting in `evaluate_fixed_robustness_abc.py`, and the
+CLI decision threshold plus the switch to `torch.inference_mode()` in
+`predict.py`.
 
-**Wei Jien — Evaluation Lead.** TODO
+**Wei Jien — Evaluation and Benchmarking Lead.** Designed and implemented
+the full model-evaluation workflow: checkpoint validation, clean
+evaluation, binary metrics, fixed and seeded-random chained robustness
+tests, fair A/B/C comparisons, and reproducible CIFAKE/SID Colab benchmarks
+(`src/metrics.py`, `evaluate.py`, `evaluate_fixed_robustness_abc.py`,
+`evaluate_random_robustness_abc.py`, `src/evaluation_conditions.py`,
+`src/random_chain_conditions.py`). Validated dataset manifests, produced
+per-image predictions, pairwise summaries and false-positive/false-negative
+analysis, added evaluation tests and documentation, and interpreted results
+to guide model selection and retraining.
 
-**Michelle — Robustness Lead.** TODO
+**Tan Teck Heang — Augmentation and Consistency Training Lead.** Owned the
+robustness augmentation pipeline and consistency-training objective,
+including transform utilities, robustness-aware training support, and
+consistency loss integration. Main contributions include
+`src/augmentations.py`, `src/losses.py`, and related training/evaluation
+configuration for robustness experiments.
