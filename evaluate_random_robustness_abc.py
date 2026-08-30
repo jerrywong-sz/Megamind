@@ -1,9 +1,10 @@
-"""Evaluate Models A, B, and C with seeded per-image random chains."""
+"""Compare three named checkpoints with seeded per-image random chains."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -53,6 +54,7 @@ RANDOM_ABC_FILENAMES = {
     "errors": "random_standard_3__false_positives_and_false_negatives.csv",
     "config": "random_standard_3__run_config.json",
 }
+MODEL_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_]*$")
 
 
 @dataclass(frozen=True)
@@ -66,24 +68,79 @@ def _model_specs(
     checkpoint_a_baseline: str | Path,
     checkpoint_b_robustness: str | Path,
     checkpoint_c_consistency: str | Path,
+    *,
+    model_a_id: str = MODEL_A_ID,
+    model_a_title: str = MODEL_TITLES[MODEL_A_ID],
+    model_b_id: str = MODEL_B_ID,
+    model_b_title: str = MODEL_TITLES[MODEL_B_ID],
+    model_c_id: str = MODEL_C_ID,
+    model_c_title: str = MODEL_TITLES[MODEL_C_ID],
 ) -> tuple[ModelSpec, ...]:
-    return (
+    specs = (
         ModelSpec(
-            MODEL_A_ID,
-            MODEL_TITLES[MODEL_A_ID],
+            model_a_id,
+            model_a_title,
             Path(checkpoint_a_baseline),
         ),
         ModelSpec(
-            MODEL_B_ID,
-            MODEL_TITLES[MODEL_B_ID],
+            model_b_id,
+            model_b_title,
             Path(checkpoint_b_robustness),
         ),
         ModelSpec(
-            MODEL_C_ID,
-            MODEL_TITLES[MODEL_C_ID],
+            model_c_id,
+            model_c_title,
             Path(checkpoint_c_consistency),
         ),
     )
+    model_ids = [spec.model_id for spec in specs]
+    if len(model_ids) != len(set(model_ids)):
+        raise ValueError("model IDs must be unique")
+    for spec in specs:
+        if not MODEL_ID_PATTERN.fullmatch(spec.model_id):
+            raise ValueError(
+                "model IDs must use lowercase letters, numbers, and underscores"
+            )
+        if not spec.model_title.strip():
+            raise ValueError("model titles must not be empty")
+    return specs
+
+
+def _evaluation_title(specs: Sequence[ModelSpec]) -> str:
+    return "Random standard-3 robustness evaluation — " + " vs ".join(
+        spec.model_title for spec in specs
+    )
+
+
+def _output_filenames(specs: Sequence[ModelSpec]) -> dict[str, str]:
+    if tuple(spec.model_id for spec in specs) == MODEL_IDS:
+        return dict(RANDOM_ABC_FILENAMES)
+
+    model_token = "_vs_".join(spec.model_id for spec in specs)
+    first_id, second_id, third_id = (
+        spec.model_id for spec in specs
+    )
+    return {
+        "predictions": (
+            f"random_standard_3__{model_token}__per_image_predictions.csv"
+        ),
+        "assignments": "random_standard_3__per_image_chain_assignments.csv",
+        "clean_predictions": (
+            f"random_standard_3__{model_token}__clean_predictions.csv"
+        ),
+        "trial_metrics": (
+            f"random_standard_3__{model_token}__trial_metrics.csv"
+        ),
+        "overall": f"random_standard_3__{model_token}__overall_summary.csv",
+        "headline": f"random_standard_3__{model_token}__headline.csv",
+        "a_vs_b": f"random_standard_3__{first_id}_vs_{second_id}.csv",
+        "b_vs_c": f"random_standard_3__{second_id}_vs_{third_id}.csv",
+        "a_vs_c": f"random_standard_3__{first_id}_vs_{third_id}.csv",
+        "patterns": "random_standard_3__chain_pattern_breakdown.csv",
+        "inclusion": "random_standard_3__transform_inclusion_breakdown.csv",
+        "errors": "random_standard_3__false_positives_and_false_negatives.csv",
+        "config": "random_standard_3__run_config.json",
+    }
 
 
 def _winner(values: dict[str, float], *, higher_is_better: bool) -> str:
@@ -126,6 +183,7 @@ def _enrich_predictions(
     clean_predictions: pd.DataFrame,
     dataset_id: str,
     trial_index: int,
+    evaluation_title: str,
 ) -> pd.DataFrame:
     enriched = predictions.merge(
         chain_table,
@@ -147,7 +205,7 @@ def _enrich_predictions(
         how="left",
         validate="one_to_one",
     )
-    enriched["evaluation_title"] = EVALUATION_TITLE
+    enriched["evaluation_title"] = evaluation_title
     enriched["dataset_id"] = dataset_id
     enriched["trial_index"] = trial_index
     enriched["probability_shift_from_clean"] = (
@@ -183,9 +241,10 @@ def _metric_row(
     trial_index: int | None,
     trial_seed: int | None,
     metrics: dict[str, float | int],
+    evaluation_title: str,
 ) -> dict[str, Any]:
     return {
-        "evaluation_title": EVALUATION_TITLE,
+        "evaluation_title": evaluation_title,
         "dataset_id": dataset_id,
         "random_policy": RANDOM_STANDARD_3_POLICY,
         "scope": scope,
@@ -205,11 +264,14 @@ def _overall_summary(
     trial_metrics: pd.DataFrame,
     predictions: pd.DataFrame,
     checkpoint_hashes: dict[str, str],
+    specs: Sequence[ModelSpec],
+    evaluation_title: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     clean_by_model = {row["model_id"]: row for row in clean_metric_rows}
     overall_rows = []
     pooled_rows = []
-    for model_id in MODEL_IDS:
+    for spec in specs:
+        model_id = spec.model_id
         model_predictions = predictions[predictions["model_id"] == model_id]
         pooled_metrics = compute_binary_metrics(
             model_predictions["label"].to_numpy(),
@@ -219,22 +281,23 @@ def _overall_summary(
         pooled_rows.append(_metric_row(
             dataset_id=dataset_id,
             model_id=model_id,
-            model_title=MODEL_TITLES[model_id],
+            model_title=spec.model_title,
             checkpoint_hash=checkpoint_hashes[model_id],
             scope="pooled_random_trials",
             trial_index=None,
             trial_seed=None,
             metrics=pooled_metrics,
+            evaluation_title=evaluation_title,
         ))
         model_trials = trial_metrics[trial_metrics["model_id"] == model_id]
         clean = clean_by_model[model_id]
         retained = model_predictions[model_predictions["clean_is_correct"]]
         row: dict[str, Any] = {
-            "evaluation_title": EVALUATION_TITLE,
+            "evaluation_title": evaluation_title,
             "dataset_id": dataset_id,
             "random_policy": RANDOM_STANDARD_3_POLICY,
             "model_id": model_id,
-            "model_title": MODEL_TITLES[model_id],
+            "model_title": spec.model_title,
             "checkpoint_hash": checkpoint_hashes[model_id],
             "num_trials": int(model_trials["trial_seed"].nunique()),
             "num_unique_images": int(model_predictions["image_path"].nunique()),
@@ -276,6 +339,8 @@ def _pairwise_comparison(
     *,
     reference_model_id: str,
     candidate_model_id: str,
+    model_titles: dict[str, str],
+    evaluation_title: str,
 ) -> pd.DataFrame:
     rows = []
     group_columns = ["scope", "trial_index", "trial_seed"]
@@ -289,16 +354,16 @@ def _pairwise_comparison(
         reference = by_model[reference_model_id]
         candidate = by_model[candidate_model_id]
         output: dict[str, Any] = {
-            "evaluation_title": EVALUATION_TITLE,
+            "evaluation_title": evaluation_title,
             "dataset_id": reference["dataset_id"],
             "random_policy": RANDOM_STANDARD_3_POLICY,
             "scope": group_key[0],
             "trial_index": group_key[1],
             "trial_seed": group_key[2],
             "reference_model_id": reference_model_id,
-            "reference_model_title": MODEL_TITLES[reference_model_id],
+            "reference_model_title": model_titles[reference_model_id],
             "candidate_model_id": candidate_model_id,
-            "candidate_model_title": MODEL_TITLES[candidate_model_id],
+            "candidate_model_title": model_titles[candidate_model_id],
             "difference_direction": (
                 f"{candidate_model_id} minus {reference_model_id}"
             ),
@@ -364,6 +429,8 @@ def _group_metrics(
     group_column: str,
     breakdown_type: str,
     threshold: float,
+    model_titles: dict[str, str],
+    evaluation_title: str,
 ) -> pd.DataFrame:
     rows = []
     for (model_id, group_value), group in predictions.groupby(
@@ -375,13 +442,13 @@ def _group_metrics(
             threshold=threshold,
         )
         rows.append({
-            "evaluation_title": EVALUATION_TITLE,
+            "evaluation_title": evaluation_title,
             "dataset_id": group["dataset_id"].iloc[0],
             "random_policy": RANDOM_STANDARD_3_POLICY,
             "breakdown_type": breakdown_type,
             "breakdown_value": group_value,
             "model_id": model_id,
-            "model_title": MODEL_TITLES[model_id],
+            "model_title": model_titles[model_id],
             "num_trials_represented": int(group["trial_seed"].nunique()),
             **metrics,
         })
@@ -392,6 +459,8 @@ def _transform_inclusion_metrics(
     predictions: pd.DataFrame,
     *,
     threshold: float,
+    model_titles: dict[str, str],
+    evaluation_title: str,
 ) -> pd.DataFrame:
     tables = []
     for transform_name in RANDOM_STANDARD_3_PARAMETER_GRID:
@@ -402,13 +471,19 @@ def _transform_inclusion_metrics(
             group_column="included_transform",
             breakdown_type="contains_transform",
             threshold=threshold,
+            model_titles=model_titles,
+            evaluation_title=evaluation_title,
         ))
     return pd.concat(tables, ignore_index=True)
 
 
-def _headline_table(overall: pd.DataFrame) -> pd.DataFrame:
+def _headline_table(
+    overall: pd.DataFrame,
+    *,
+    evaluation_title: str,
+) -> pd.DataFrame:
     row: dict[str, Any] = {
-        "evaluation_title": EVALUATION_TITLE,
+        "evaluation_title": evaluation_title,
         "dataset_id": overall["dataset_id"].iloc[0],
         "random_policy": RANDOM_STANDARD_3_POLICY,
         "num_trials": int(overall["num_trials"].iloc[0]),
@@ -455,6 +530,12 @@ def run_random_standard_3_abc_evaluation(
     num_workers: int = 2,
     device: torch.device | None = None,
     trial_seeds: Sequence[int] = DEFAULT_TRIAL_SEEDS,
+    model_a_id: str = MODEL_A_ID,
+    model_a_title: str = MODEL_TITLES[MODEL_A_ID],
+    model_b_id: str = MODEL_B_ID,
+    model_b_title: str = MODEL_TITLES[MODEL_B_ID],
+    model_c_id: str = MODEL_C_ID,
+    model_c_title: str = MODEL_TITLES[MODEL_C_ID],
 ) -> dict[str, pd.DataFrame]:
     """Run clean plus five seeded random-standard-3 A/B/C trials."""
     if not dataset_id.strip():
@@ -471,7 +552,19 @@ def run_random_standard_3_abc_evaluation(
         checkpoint_a_baseline,
         checkpoint_b_robustness,
         checkpoint_c_consistency,
+        model_a_id=model_a_id,
+        model_a_title=model_a_title,
+        model_b_id=model_b_id,
+        model_b_title=model_b_title,
+        model_c_id=model_c_id,
+        model_c_title=model_c_title,
     )
+    evaluation_title = _evaluation_title(specs)
+    model_titles = {
+        spec.model_id: spec.model_title
+        for spec in specs
+    }
+    output_filenames = _output_filenames(specs)
     loaded_models: list[tuple[ModelSpec, nn.Module, str]] = []
     checkpoint_records = []
     checkpoint_hashes = {}
@@ -510,7 +603,7 @@ def run_random_standard_3_abc_evaluation(
             checkpoint_hash=checkpoint_hash,
             transform_name="clean",
         )
-        predictions["evaluation_title"] = EVALUATION_TITLE
+        predictions["evaluation_title"] = evaluation_title
         predictions["dataset_id"] = dataset_id
         predictions["model_title"] = spec.model_title
         clean_tables.append(predictions)
@@ -524,6 +617,7 @@ def run_random_standard_3_abc_evaluation(
             trial_index=None,
             trial_seed=None,
             metrics=metrics,
+            evaluation_title=evaluation_title,
         ))
 
     random_tables = []
@@ -571,7 +665,7 @@ def run_random_standard_3_abc_evaluation(
                 assignment_tables.append(trial_assignments)
             elif not current_rows.equals(reference_rows):
                 raise RuntimeError(
-                    "Models A, B, and C were not evaluated on identical rows"
+                    "Configured models were not evaluated on identical rows"
                 )
             assert trial_assignments is not None
             enriched = _enrich_predictions(
@@ -580,6 +674,7 @@ def run_random_standard_3_abc_evaluation(
                 clean_predictions=clean_by_model[spec.model_id],
                 dataset_id=dataset_id,
                 trial_index=trial_index,
+                evaluation_title=evaluation_title,
             )
             enriched["model_title"] = spec.model_title
             random_tables.append(enriched)
@@ -592,6 +687,7 @@ def run_random_standard_3_abc_evaluation(
                 trial_index=trial_index,
                 trial_seed=trial_seed,
                 metrics=metrics,
+                evaluation_title=evaluation_title,
             ))
 
     clean_predictions = pd.concat(clean_tables, ignore_index=True)
@@ -604,6 +700,8 @@ def run_random_standard_3_abc_evaluation(
         trial_metrics=trial_metrics,
         predictions=predictions,
         checkpoint_hashes=checkpoint_hashes,
+        specs=specs,
+        evaluation_title=evaluation_title,
     )
     comparison_metrics = pd.concat(
         [trial_metrics, pooled_metrics],
@@ -612,18 +710,24 @@ def run_random_standard_3_abc_evaluation(
     pairwise = {
         "a_vs_b": _pairwise_comparison(
             comparison_metrics,
-            reference_model_id=MODEL_A_ID,
-            candidate_model_id=MODEL_B_ID,
+            reference_model_id=specs[0].model_id,
+            candidate_model_id=specs[1].model_id,
+            model_titles=model_titles,
+            evaluation_title=evaluation_title,
         ),
         "b_vs_c": _pairwise_comparison(
             comparison_metrics,
-            reference_model_id=MODEL_B_ID,
-            candidate_model_id=MODEL_C_ID,
+            reference_model_id=specs[1].model_id,
+            candidate_model_id=specs[2].model_id,
+            model_titles=model_titles,
+            evaluation_title=evaluation_title,
         ),
         "a_vs_c": _pairwise_comparison(
             comparison_metrics,
-            reference_model_id=MODEL_A_ID,
-            candidate_model_id=MODEL_C_ID,
+            reference_model_id=specs[0].model_id,
+            candidate_model_id=specs[2].model_id,
+            model_titles=model_titles,
+            evaluation_title=evaluation_title,
         ),
     }
     patterns = _group_metrics(
@@ -631,13 +735,20 @@ def run_random_standard_3_abc_evaluation(
         group_column="chain_pattern",
         breakdown_type="ordered_chain_pattern",
         threshold=threshold,
+        model_titles=model_titles,
+        evaluation_title=evaluation_title,
     )
     inclusion = _transform_inclusion_metrics(
         predictions,
         threshold=threshold,
+        model_titles=model_titles,
+        evaluation_title=evaluation_title,
     )
     errors = predictions[~predictions["is_correct"]].copy()
-    headline = _headline_table(overall)
+    headline = _headline_table(
+        overall,
+        evaluation_title=evaluation_title,
+    )
 
     destination = Path(output_dir)
     destination.mkdir(parents=True, exist_ok=True)
@@ -655,12 +766,12 @@ def run_random_standard_3_abc_evaluation(
     }
     for output_name, table in outputs.items():
         table.to_csv(
-            destination / RANDOM_ABC_FILENAMES[output_name],
+            destination / output_filenames[output_name],
             index=False,
         )
 
     config = {
-        "evaluation_title": EVALUATION_TITLE,
+        "evaluation_title": evaluation_title,
         "evaluation_type": "seeded_per_image_random_chain",
         "dataset_id": dataset_id,
         "data_root": str(data_root),
@@ -683,9 +794,9 @@ def run_random_standard_3_abc_evaluation(
         "label_convention": {"0": "real", "1": "AI-generated"},
         "models": checkpoint_records,
         "reported_metrics": list(REPORTED_METRICS),
-        "output_files": RANDOM_ABC_FILENAMES,
+        "output_files": output_filenames,
     }
-    with (destination / RANDOM_ABC_FILENAMES["config"]).open(
+    with (destination / output_filenames["config"]).open(
         "w",
         encoding="utf-8",
     ) as config_file:
@@ -701,16 +812,37 @@ def run_random_standard_3_abc_evaluation(
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Compare Models A, B, and C over five seeded per-image random "
-            "three-transform trials."
+            "Compare three named checkpoints over five seeded per-image "
+            "random three-transform trials."
         )
     )
     parser.add_argument("--dataset-id", required=True)
     parser.add_argument("--data-root", required=True)
     parser.add_argument("--manifest", required=True)
-    parser.add_argument("--checkpoint-a-baseline", required=True)
-    parser.add_argument("--checkpoint-b-robustness", required=True)
-    parser.add_argument("--checkpoint-c-consistency", required=True)
+    parser.add_argument(
+        "--checkpoint-a-baseline",
+        "--checkpoint-a",
+        dest="checkpoint_a_baseline",
+        required=True,
+    )
+    parser.add_argument(
+        "--checkpoint-b-robustness",
+        "--checkpoint-b",
+        dest="checkpoint_b_robustness",
+        required=True,
+    )
+    parser.add_argument(
+        "--checkpoint-c-consistency",
+        "--checkpoint-c",
+        dest="checkpoint_c_consistency",
+        required=True,
+    )
+    parser.add_argument("--model-a-id", default=MODEL_A_ID)
+    parser.add_argument("--model-a-title", default=MODEL_TITLES[MODEL_A_ID])
+    parser.add_argument("--model-b-id", default=MODEL_B_ID)
+    parser.add_argument("--model-b-title", default=MODEL_TITLES[MODEL_B_ID])
+    parser.add_argument("--model-c-id", default=MODEL_C_ID)
+    parser.add_argument("--model-c-title", default=MODEL_TITLES[MODEL_C_ID])
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--split", choices=["val", "test"], default="val")
     parser.add_argument("--threshold", type=float, default=0.5)
@@ -746,8 +878,14 @@ def main(argv: Sequence[str] | None = None) -> None:
         num_workers=args.num_workers,
         device=resolve_device(args.device),
         trial_seeds=args.trial_seeds,
+        model_a_id=args.model_a_id,
+        model_a_title=args.model_a_title,
+        model_b_id=args.model_b_id,
+        model_b_title=args.model_b_title,
+        model_c_id=args.model_c_id,
+        model_c_title=args.model_c_title,
     )
-    print(EVALUATION_TITLE)
+    print(outputs["headline"]["evaluation_title"].iloc[0])
     print(f"Dataset: {args.dataset_id}")
     print(f"Trial seeds: {args.trial_seeds}")
     print(f"Results written to: {Path(args.output_dir)}")
