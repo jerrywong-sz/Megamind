@@ -18,9 +18,12 @@ from evaluate import (
     evaluate_clean_model,
     load_model_checkpoint,
     run_clean_comparison,
+    run_clean_model_specs,
     run_robustness_comparison,
+    run_robustness_model_specs,
 )
 from src.evaluation_conditions import CLEAN_CONDITION, EvaluationCondition
+from src.evaluation_models import build_model_specs
 
 
 class FixedLogitModel(nn.Module):
@@ -387,3 +390,89 @@ def test_robustness_runner_preserves_custom_b_and_c_model_ids(
         "experiment_b",
         "experiment_c",
     ]
+
+
+def test_clean_and_basic_support_four_named_models_and_all_pairs(
+    tmp_path,
+    monkeypatch,
+):
+    data_root, manifest_path = _write_evaluation_fixture(tmp_path)
+    requested_architectures = []
+
+    def fake_checkpoint_loader(checkpoint_path, device, architecture=None):
+        requested_architectures.append(architecture)
+        return FixedLogitModel([-2.0, 2.0, 2.0, -2.0]), (
+            Path(checkpoint_path).stem[0] * 64
+        )
+
+    monkeypatch.setattr(evaluate, "load_model_checkpoint", fake_checkpoint_loader)
+    specs = build_model_specs(
+        checkpoints=("d.pt", "e.pt", "f.pt", "g.pt"),
+        model_ids=("sid_a", "sid_b", "sid_convnext", "sid_dino"),
+        model_titles=("SID A", "SID B", "SID ConvNeXt", "SID DINO"),
+        architectures=(
+            "efficientnet_b0",
+            "efficientnet_b0",
+            "convnext_tiny",
+            "dinov2_vits14",
+        ),
+    )
+
+    clean_dir = tmp_path / "clean-four"
+    clean_predictions, clean_metrics = run_clean_model_specs(
+        data_root=data_root,
+        manifest_path=manifest_path,
+        model_specs=specs,
+        output_dir=clean_dir,
+        batch_size=4,
+        num_workers=0,
+        device=torch.device("cpu"),
+    )
+    clean_pairs = pd.read_csv(clean_dir / METRICS_FILENAMES["comparison"])
+    assert len(clean_predictions) == 4 * 4
+    assert len(clean_metrics) == 4
+    assert len(clean_pairs) == 6
+    assert set(clean_metrics["model_title"]) == {
+        "SID A", "SID B", "SID ConvNeXt", "SID DINO"
+    }
+
+    basic_dir = tmp_path / "basic-four"
+    conditions = (CLEAN_CONDITION, EvaluationCondition("jpeg", 30))
+    basic_predictions, basic_metrics, basic_pairs = run_robustness_model_specs(
+        data_root=data_root,
+        manifest_path=manifest_path,
+        model_specs=specs,
+        output_dir=basic_dir,
+        batch_size=4,
+        num_workers=0,
+        device=torch.device("cpu"),
+        conditions=conditions,
+    )
+    assert len(basic_predictions) == 4 * 4 * 2
+    assert len(basic_metrics) == 4 * 2
+    assert len(basic_pairs) == 6 * 2
+    assert set(basic_pairs[["model_a_id", "model_b_id"]].itertuples(
+        index=False, name=None
+    )) == {
+        ("sid_a", "sid_b"),
+        ("sid_a", "sid_convnext"),
+        ("sid_a", "sid_dino"),
+        ("sid_b", "sid_convnext"),
+        ("sid_b", "sid_dino"),
+        ("sid_convnext", "sid_dino"),
+    }
+    assert set(basic_pairs["reference_model_title"]) == {
+        "SID A", "SID B", "SID ConvNeXt"
+    }
+    assert set(basic_pairs["candidate_model_title"]) == {
+        "SID B", "SID ConvNeXt", "SID DINO"
+    }
+    assert "sid_dino__false_positives" in basic_pairs.columns
+    assert "sid_dino_minus_sid_a__false_negative_rate" in basic_pairs.columns
+    assert basic_pairs["evaluation_title"].str.contains("SID DINO").all()
+    assert requested_architectures == [
+        "efficientnet_b0",
+        "efficientnet_b0",
+        "convnext_tiny",
+        "dinov2_vits14",
+    ] * 2

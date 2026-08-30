@@ -1,8 +1,8 @@
-"""Evaluate Models A, B, and C under fixed robustness conditions.
+"""Evaluate two or more named models under fixed robustness conditions.
 
-This runner is intentionally explicit about model roles.  It produces three
-pairwise reports (A-vs-B, B-vs-C, and A-vs-C), one combined A/B/C report, a
-full metrics table, per-image predictions, and a reproducibility config.
+The module name and legacy A/B/C interface remain for saved notebooks. New
+runs use aligned model lists and produce every pairwise report, one combined
+summary, full metrics, per-image predictions, and a reproducibility config.
 Randomly sampled transform chains are outside this runner's scope.
 """
 
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import dataclass
+from itertools import combinations
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -33,6 +33,17 @@ from src.evaluation_conditions import (
     condition_id,
     condition_steps,
     condition_title,
+)
+from src.evaluation_models import (
+    EvaluationModelSpec,
+    add_variable_model_arguments,
+    build_model_specs,
+    comparison_title,
+    model_pairs,
+    model_token,
+    model_titles,
+    validate_model_specs,
+    variable_model_specs_from_args,
 )
 
 
@@ -102,15 +113,6 @@ PARAMETER_NAMES = {
     "colour": "strength",
     "crop": "fraction",
 }
-
-
-@dataclass(frozen=True)
-class ModelSpec:
-    """One explicitly named checkpoint participating in the A/B/C run."""
-
-    model_id: str
-    model_title: str
-    checkpoint_path: Path
 
 
 def _step_records(condition: EvaluationCondition) -> list[dict[str, Any]]:
@@ -357,23 +359,27 @@ def build_combined_abc_summary(
     *,
     conditions: Sequence[EvaluationCondition],
     model_titles: dict[str, str] = MODEL_TITLES,
+    model_ids: Sequence[str] = (MODEL_A_ID, MODEL_B_ID, MODEL_C_ID),
+    evaluation_title: str = EVALUATION_TITLE,
 ) -> pd.DataFrame:
-    """Place all A/B/C metrics and winners in one explicitly named table."""
-    model_ids = (MODEL_A_ID, MODEL_B_ID, MODEL_C_ID)
+    """Place all supplied model metrics and winners in one named table."""
+    model_ids = tuple(model_ids)
+    if len(model_ids) < 2:
+        raise ValueError("combined summary requires at least two models")
     clean_rows = _clean_metric_rows(metrics_table)
     if not set(model_ids).issubset(clean_rows):
-        raise ValueError("metrics must contain clean rows for Models A, B, and C")
+        raise ValueError("metrics must contain clean rows for every model")
 
     summary_rows: list[dict[str, Any]] = []
     for condition in conditions:
         rows_by_model = _metric_row_by_model(metrics_table, condition)
         if not set(model_ids).issubset(rows_by_model):
             raise ValueError(
-                f"condition '{condition_id(condition)}' is missing A, B, or C"
+                f"condition '{condition_id(condition)}' is missing a model"
             )
 
         output_row: dict[str, Any] = {
-            "report_title": EVALUATION_TITLE,
+            "report_title": evaluation_title,
             **condition_metadata(condition),
         }
         for model_id in model_ids:
@@ -388,29 +394,20 @@ def build_combined_abc_summary(
                 clean=clean_rows[model_id],
             )
 
-        for metric in (
-            "accuracy",
-            "auroc",
-            "auprc",
-            "false_positive_rate",
-            "false_negative_rate",
-            "brier_score",
-        ):
-            output_row[
-                f"{MODEL_B_ID}_minus_{MODEL_A_ID}__{metric}"
-            ] = float(rows_by_model[MODEL_B_ID][metric]) - float(
-                rows_by_model[MODEL_A_ID][metric]
-            )
-            output_row[
-                f"{MODEL_C_ID}_minus_{MODEL_B_ID}__{metric}"
-            ] = float(rows_by_model[MODEL_C_ID][metric]) - float(
-                rows_by_model[MODEL_B_ID][metric]
-            )
-            output_row[
-                f"{MODEL_C_ID}_minus_{MODEL_A_ID}__{metric}"
-            ] = float(rows_by_model[MODEL_C_ID][metric]) - float(
-                rows_by_model[MODEL_A_ID][metric]
-            )
+        for reference_id, candidate_id in combinations(model_ids, 2):
+            for metric in (
+                "accuracy",
+                "auroc",
+                "auprc",
+                "false_positive_rate",
+                "false_negative_rate",
+                "brier_score",
+            ):
+                output_row[
+                    f"{candidate_id}_minus_{reference_id}__{metric}"
+                ] = float(rows_by_model[candidate_id][metric]) - float(
+                    rows_by_model[reference_id][metric]
+                )
 
         output_row["highest_accuracy_model"] = _winner(
             {
@@ -474,6 +471,7 @@ def _prediction_output_columns(predictions: pd.DataFrame) -> list[str]:
     metadata_columns = [
         "evaluation_title",
         "model_title",
+        "architecture_override",
         "condition_id",
         "condition_title",
         "condition_kind",
@@ -488,6 +486,7 @@ def _prediction_output_columns(predictions: pd.DataFrame) -> list[str]:
         "evaluation_title",
         "model_id",
         "model_title",
+        "architecture_override",
         "checkpoint_hash",
         "image_id",
         "image_path",
@@ -512,7 +511,7 @@ def _prediction_output_columns(predictions: pd.DataFrame) -> list[str]:
     ]
     expected = set(PREDICTION_COLUMNS) | set(metadata_columns)
     if set(predictions.columns) != expected:
-        raise RuntimeError("unexpected columns in A/B/C prediction table")
+        raise RuntimeError("unexpected columns in fixed prediction table")
     return ordered
 
 
@@ -520,33 +519,46 @@ def _build_model_specs(
     checkpoint_a_baseline: str | Path,
     checkpoint_b_robustness: str | Path,
     checkpoint_c_consistency: str | Path,
-) -> tuple[ModelSpec, ...]:
-    return (
-        ModelSpec(
-            MODEL_A_ID,
+) -> tuple[EvaluationModelSpec, ...]:
+    return build_model_specs(
+        checkpoints=(
+            checkpoint_a_baseline,
+            checkpoint_b_robustness,
+            checkpoint_c_consistency,
+        ),
+        model_ids=(MODEL_A_ID, MODEL_B_ID, MODEL_C_ID),
+        model_titles=(
             MODEL_TITLES[MODEL_A_ID],
-            Path(checkpoint_a_baseline),
-        ),
-        ModelSpec(
-            MODEL_B_ID,
             MODEL_TITLES[MODEL_B_ID],
-            Path(checkpoint_b_robustness),
-        ),
-        ModelSpec(
-            MODEL_C_ID,
             MODEL_TITLES[MODEL_C_ID],
-            Path(checkpoint_c_consistency),
         ),
     )
 
 
-def run_fixed_robustness_abc_evaluation(
+def _fixed_output_filenames(
+    specs: Sequence[EvaluationModelSpec],
+) -> dict[str, str]:
+    model_ids = tuple(spec.model_id for spec in specs)
+    if model_ids == (MODEL_A_ID, MODEL_B_ID, MODEL_C_ID):
+        return dict(FIXED_ABC_FILENAMES)
+    token = model_token(specs)
+    filenames = {
+        "predictions": f"fixed_robustness__{token}__per_image_predictions.csv",
+        "metrics": f"fixed_robustness__{token}__full_metrics.csv",
+        "summary": f"fixed_robustness__{token}__combined_summary.csv",
+        "config": f"fixed_robustness__{token}__run_config.json",
+    }
+    for reference_spec, candidate_spec in model_pairs(specs):
+        pair_key = f"{reference_spec.model_id}_vs_{candidate_spec.model_id}"
+        filenames[pair_key] = f"fixed_robustness__{pair_key}.csv"
+    return filenames
+
+
+def run_fixed_robustness_evaluation(
     *,
     data_root: str | Path,
     manifest_path: str | Path,
-    checkpoint_a_baseline: str | Path,
-    checkpoint_b_robustness: str | Path,
-    checkpoint_c_consistency: str | Path,
+    model_specs: Sequence[EvaluationModelSpec],
     output_dir: str | Path,
     split: str = "val",
     threshold: float = 0.5,
@@ -563,33 +575,47 @@ def run_fixed_robustness_abc_evaluation(
     dict[str, pd.DataFrame],
     pd.DataFrame,
 ]:
-    """Run one fair fixed-condition evaluation over Models A, B, and C."""
+    """Run one fair fixed-condition evaluation over two or more models."""
+    specs = validate_model_specs(model_specs)
     if not 0.0 <= threshold <= 1.0:
         raise ValueError("threshold must be between 0 and 1")
     if not conditions or not any(item.name == "clean" for item in conditions):
-        raise ValueError("fixed A/B/C evaluation requires a clean condition")
+        raise ValueError("fixed evaluation requires a clean condition")
     condition_ids = [condition_id(item) for item in conditions]
     if len(condition_ids) != len(set(condition_ids)):
         raise ValueError("fixed condition IDs must be unique")
 
     evaluation_device = device or resolve_device("auto")
-    model_specs = _build_model_specs(
-        checkpoint_a_baseline,
-        checkpoint_b_robustness,
-        checkpoint_c_consistency,
+    evaluation_title = (
+        EVALUATION_TITLE
+        if tuple(spec.model_id for spec in specs)
+        == (MODEL_A_ID, MODEL_B_ID, MODEL_C_ID)
+        else comparison_title("Fixed robustness evaluation", specs)
     )
-    loaded_models: list[tuple[ModelSpec, nn.Module, str]] = []
-    checkpoint_records: list[dict[str, str]] = []
+    title_by_id = model_titles(specs)
+    output_filenames = _fixed_output_filenames(specs)
+    loaded_models: list[
+        tuple[EvaluationModelSpec, nn.Module, str]
+    ] = []
+    checkpoint_records: list[dict[str, Any]] = []
 
-    for spec in model_specs:
-        model, checkpoint_hash = load_model_checkpoint(
-            spec.checkpoint_path,
-            evaluation_device,
-        )
+    for spec in specs:
+        if spec.architecture is None:
+            model, checkpoint_hash = load_model_checkpoint(
+                spec.checkpoint_path,
+                evaluation_device,
+            )
+        else:
+            model, checkpoint_hash = load_model_checkpoint(
+                spec.checkpoint_path,
+                evaluation_device,
+                architecture=spec.architecture,
+            )
         loaded_models.append((spec, model, checkpoint_hash))
         checkpoint_records.append({
             "model_id": spec.model_id,
             "model_title": spec.model_title,
+            "architecture_override": spec.architecture or "auto",
             "path": str(spec.checkpoint_path),
             "sha256": checkpoint_hash,
         })
@@ -632,11 +658,14 @@ def run_fixed_robustness_abc_evaluation(
                 reference_rows = current_rows
             elif not current_rows.equals(reference_rows):
                 raise RuntimeError(
-                    "Models A, B, and C were not evaluated on identical rows"
+                    "configured models were not evaluated on identical rows"
                 )
 
-            predictions["evaluation_title"] = EVALUATION_TITLE
+            predictions["evaluation_title"] = evaluation_title
             predictions["model_title"] = spec.model_title
+            predictions["architecture_override"] = (
+                spec.architecture or "auto"
+            )
             for key, value in metadata.items():
                 predictions[key] = value
             predictions = predictions[
@@ -645,9 +674,10 @@ def run_fixed_robustness_abc_evaluation(
             prediction_tables.append(predictions)
 
             metric_rows.append({
-                "report_title": EVALUATION_TITLE,
+                "report_title": evaluation_title,
                 "model_id": spec.model_id,
                 "model_title": spec.model_title,
+                "architecture_override": spec.architecture or "auto",
                 "checkpoint_hash": checkpoint_hash,
                 "split": split,
                 "run_seed": seed,
@@ -661,53 +691,55 @@ def run_fixed_robustness_abc_evaluation(
 
     predictions_table = pd.concat(prediction_tables, ignore_index=True)
     metrics_table = pd.DataFrame(metric_rows)
-    pairwise_tables = {
-        "a_vs_b": build_explicit_pairwise_comparison(
-            metrics_table,
-            conditions=conditions,
-            reference_model_id=MODEL_A_ID,
-            candidate_model_id=MODEL_B_ID,
-        ),
-        "b_vs_c": build_explicit_pairwise_comparison(
-            metrics_table,
-            conditions=conditions,
-            reference_model_id=MODEL_B_ID,
-            candidate_model_id=MODEL_C_ID,
-        ),
-        "a_vs_c": build_explicit_pairwise_comparison(
-            metrics_table,
-            conditions=conditions,
-            reference_model_id=MODEL_A_ID,
-            candidate_model_id=MODEL_C_ID,
-        ),
+    legacy_pair_keys = {
+        (MODEL_A_ID, MODEL_B_ID): "a_vs_b",
+        (MODEL_B_ID, MODEL_C_ID): "b_vs_c",
+        (MODEL_A_ID, MODEL_C_ID): "a_vs_c",
     }
-    abc_summary = build_combined_abc_summary(
+    pairwise_tables: dict[str, pd.DataFrame] = {}
+    for reference_spec, candidate_spec in model_pairs(specs):
+        pair_key = legacy_pair_keys.get(
+            (reference_spec.model_id, candidate_spec.model_id),
+            f"{reference_spec.model_id}_vs_{candidate_spec.model_id}",
+        )
+        pairwise_tables[pair_key] = build_explicit_pairwise_comparison(
+            metrics_table,
+            conditions=conditions,
+            reference_model_id=reference_spec.model_id,
+            candidate_model_id=candidate_spec.model_id,
+            model_titles=title_by_id,
+        )
+    combined_summary = build_combined_abc_summary(
         metrics_table,
         conditions=conditions,
+        model_titles=title_by_id,
+        model_ids=[spec.model_id for spec in specs],
+        evaluation_title=evaluation_title,
     )
 
     destination = Path(output_dir)
     destination.mkdir(parents=True, exist_ok=True)
     predictions_table.to_csv(
-        destination / FIXED_ABC_FILENAMES["predictions"],
+        destination / output_filenames["predictions"],
         index=False,
     )
     metrics_table.to_csv(
-        destination / FIXED_ABC_FILENAMES["metrics"],
+        destination / output_filenames["metrics"],
         index=False,
     )
     for comparison_name, comparison_table in pairwise_tables.items():
         comparison_table.to_csv(
-            destination / FIXED_ABC_FILENAMES[comparison_name],
+            destination / output_filenames[comparison_name],
             index=False,
         )
-    abc_summary.to_csv(
-        destination / FIXED_ABC_FILENAMES["abc"],
+    summary_key = "abc" if "abc" in output_filenames else "summary"
+    combined_summary.to_csv(
+        destination / output_filenames[summary_key],
         index=False,
     )
 
     run_config = {
-        "evaluation_title": EVALUATION_TITLE,
+        "evaluation_title": evaluation_title,
         "evaluation_type": "fixed_conditions_only",
         "random_condition_sampling": False,
         "data_root": str(data_root),
@@ -721,7 +753,7 @@ def run_fixed_robustness_abc_evaluation(
         "label_convention": {"0": "real", "1": "AI-generated"},
         "preprocessing": "fixed condition before src.data.get_eval_transform",
         "num_conditions": len(conditions),
-        "num_models": len(model_specs),
+        "num_models": len(specs),
         "num_images_per_model_condition": int(
             metric_rows[0]["num_samples"]
         ),
@@ -734,30 +766,73 @@ def run_fixed_robustness_abc_evaluation(
             for condition in conditions
         ],
         "reported_metrics": list(REPORTED_METRICS),
-        "output_files": FIXED_ABC_FILENAMES,
+        "output_files": output_filenames,
     }
-    with (destination / FIXED_ABC_FILENAMES["config"]).open(
+    with (destination / output_filenames["config"]).open(
         "w",
         encoding="utf-8",
     ) as config_file:
         json.dump(run_config, config_file, indent=2, ensure_ascii=False)
         config_file.write("\n")
 
-    return predictions_table, metrics_table, pairwise_tables, abc_summary
+    return predictions_table, metrics_table, pairwise_tables, combined_summary
+
+
+def run_fixed_robustness_abc_evaluation(
+    *,
+    data_root: str | Path,
+    manifest_path: str | Path,
+    checkpoint_a_baseline: str | Path,
+    checkpoint_b_robustness: str | Path,
+    checkpoint_c_consistency: str | Path,
+    output_dir: str | Path,
+    split: str = "val",
+    threshold: float = 0.5,
+    batch_size: int = 32,
+    num_workers: int = 2,
+    device: torch.device | None = None,
+    seed: int = 42,
+    conditions: Sequence[
+        EvaluationCondition
+    ] = ALL_FIXED_EVALUATION_CONDITIONS,
+) -> tuple[
+    pd.DataFrame,
+    pd.DataFrame,
+    dict[str, pd.DataFrame],
+    pd.DataFrame,
+]:
+    """Backward-compatible wrapper for the original A/B/C command."""
+    return run_fixed_robustness_evaluation(
+        data_root=data_root,
+        manifest_path=manifest_path,
+        model_specs=_build_model_specs(
+            checkpoint_a_baseline,
+            checkpoint_b_robustness,
+            checkpoint_c_consistency,
+        ),
+        output_dir=output_dir,
+        split=split,
+        threshold=threshold,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        device=device,
+        seed=seed,
+        conditions=conditions,
+    )
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Run an explicitly named fixed-condition comparison of Model A "
-            "baseline, Model B robustness, and Model C consistency."
+            "Run a fixed-condition comparison over two or more named models."
         ),
     )
     parser.add_argument("--data-root", required=True)
     parser.add_argument("--manifest", required=True)
-    parser.add_argument("--checkpoint-a-baseline", required=True)
-    parser.add_argument("--checkpoint-b-robustness", required=True)
-    parser.add_argument("--checkpoint-c-consistency", required=True)
+    parser.add_argument("--checkpoint-a-baseline")
+    parser.add_argument("--checkpoint-b-robustness")
+    parser.add_argument("--checkpoint-c-consistency")
+    add_variable_model_arguments(parser)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--split", choices=["val", "test"], default="val")
     parser.add_argument("--threshold", type=float, default=0.5)
@@ -804,17 +879,31 @@ def calculate_headline_metrics(abc_summary: pd.DataFrame, model_ids: list[str]):
 def main(argv: Sequence[str] | None = None) -> None:
     args = build_argument_parser().parse_args(argv)
     device = resolve_device(args.device)
+    try:
+        specs = variable_model_specs_from_args(args)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+    if specs is None:
+        legacy_checkpoints = (
+            args.checkpoint_a_baseline,
+            args.checkpoint_b_robustness,
+            args.checkpoint_c_consistency,
+        )
+        if any(path is None for path in legacy_checkpoints):
+            raise SystemExit(
+                "provide all three legacy checkpoint flags or use "
+                "--checkpoints with --model-ids"
+            )
+        specs = _build_model_specs(*legacy_checkpoints)
     conditions = (
         ALL_FIXED_EVALUATION_CONDITIONS
         if args.condition_set == "all-fixed"
         else FIXED_CHAIN_EVALUATION_CONDITIONS
     )
-    _, _, _, abc_summary = run_fixed_robustness_abc_evaluation(
+    _, _, _, combined_summary = run_fixed_robustness_evaluation(
         data_root=args.data_root,
         manifest_path=args.manifest,
-        checkpoint_a_baseline=args.checkpoint_a_baseline,
-        checkpoint_b_robustness=args.checkpoint_b_robustness,
-        checkpoint_c_consistency=args.checkpoint_c_consistency,
+        model_specs=specs,
         output_dir=args.output_dir,
         split=args.split,
         threshold=args.threshold,
@@ -825,23 +914,24 @@ def main(argv: Sequence[str] | None = None) -> None:
         conditions=conditions,
     )
 
-    display_columns = [
-        "condition_title",
-        f"{MODEL_A_ID}__accuracy",
-        f"{MODEL_B_ID}__accuracy",
-        f"{MODEL_C_ID}__accuracy",
-        "highest_accuracy_model",
-        f"{MODEL_A_ID}__false_positive_rate",
-        f"{MODEL_B_ID}__false_positive_rate",
-        f"{MODEL_C_ID}__false_positive_rate",
-    ]
-    print(EVALUATION_TITLE)
+    display_columns = ["condition_title"]
+    display_columns.extend(
+        f"{spec.model_id}__accuracy" for spec in specs
+    )
+    display_columns.append("highest_accuracy_model")
+    display_columns.extend(
+        f"{spec.model_id}__false_positive_rate" for spec in specs
+    )
+    evaluation_title = comparison_title("Fixed robustness evaluation", specs)
+    print(evaluation_title)
     print(f"Evaluation device: {device}")
     print(f"Condition set: {args.condition_set}")
     print(f"Results written to: {Path(args.output_dir)}")
-    print(abc_summary[display_columns])
-    
-    calculate_headline_metrics(abc_summary, [MODEL_A_ID, MODEL_B_ID, MODEL_C_ID])
+    print(combined_summary[display_columns])
+    calculate_headline_metrics(
+        combined_summary,
+        [spec.model_id for spec in specs],
+    )
 
 
 if __name__ == "__main__":

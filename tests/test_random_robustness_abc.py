@@ -19,8 +19,10 @@ from evaluate_random_robustness_abc import (
     MODEL_C_ID,
     RANDOM_ABC_FILENAMES,
     build_argument_parser,
+    run_random_standard_3_evaluation,
     run_random_standard_3_abc_evaluation,
 )
+from src.evaluation_models import build_model_specs
 
 
 class FixedLogitModel(nn.Module):
@@ -252,3 +254,71 @@ def test_random_cli_accepts_generic_checkpoint_aliases_and_custom_labels():
     assert args.checkpoint_c_consistency == "sid-b.pt"
     assert args.model_a_id == "best_old"
     assert args.model_c_title == "SID B robustness training"
+
+
+def test_random_runner_supports_four_models_and_six_pairwise_reports(
+    tmp_path,
+    monkeypatch,
+):
+    data_root, manifest_path = _fixture(tmp_path)
+    output_dir = tmp_path / "random-four"
+    requested_architectures = []
+
+    def fake_checkpoint_loader(checkpoint_path, device, architecture=None):
+        requested_architectures.append(architecture)
+        return FixedLogitModel([-2.0, 2.0, 2.0, -2.0]), (
+            Path(checkpoint_path).stem[0] * 64
+        )
+
+    monkeypatch.setattr(
+        random_evaluation,
+        "load_model_checkpoint",
+        fake_checkpoint_loader,
+    )
+    specs = build_model_specs(
+        checkpoints=("d.pt", "e.pt", "f.pt", "g.pt"),
+        model_ids=("sid_a", "sid_b", "sid_convnext", "sid_dino"),
+        model_titles=("SID A", "SID B", "SID ConvNeXt", "SID DINO"),
+        architectures=(
+            "efficientnet_b0",
+            "efficientnet_b0",
+            "convnext_tiny",
+            "dinov2_vits14",
+        ),
+    )
+
+    outputs = run_random_standard_3_evaluation(
+        dataset_id="SID_SET",
+        data_root=data_root,
+        manifest_path=manifest_path,
+        model_specs=specs,
+        output_dir=output_dir,
+        batch_size=4,
+        num_workers=0,
+        device=torch.device("cpu"),
+        trial_seeds=(42,),
+    )
+
+    expected_pairs = {
+        "sid_a_vs_sid_b",
+        "sid_a_vs_sid_convnext",
+        "sid_a_vs_sid_dino",
+        "sid_b_vs_sid_convnext",
+        "sid_b_vs_sid_dino",
+        "sid_convnext_vs_sid_dino",
+    }
+    assert expected_pairs.issubset(outputs)
+    assert len(outputs["predictions"]) == 4 * 4
+    assert len(outputs["overall"]) == 4
+    assert requested_architectures == [
+        "efficientnet_b0",
+        "efficientnet_b0",
+        "convnext_tiny",
+        "dinov2_vits14",
+    ]
+    with (output_dir / "random_standard_3__run_config.json").open(
+        encoding="utf-8"
+    ) as file:
+        config = json.load(file)
+    assert config["num_models"] == 4
+    assert expected_pairs.issubset(config["output_files"])
