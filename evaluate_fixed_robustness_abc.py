@@ -30,6 +30,7 @@ from src.evaluation_conditions import (
     FIXED_CHAIN_EVALUATION_CONDITIONS,
     EvaluationCondition,
     build_condition_transform,
+    condition_id,
     condition_steps,
     condition_title,
 )
@@ -143,7 +144,7 @@ def condition_metadata(condition: EvaluationCondition) -> dict[str, Any]:
         transform_chain = "none"
 
     return {
-        "condition_id": condition.name,
+        "condition_id": condition_id(condition),
         "condition_title": condition_title(condition),
         "condition_kind": condition.condition_kind,
         "num_transform_steps": len(steps),
@@ -183,7 +184,7 @@ def _metric_row_by_model(
 ) -> dict[str, pd.Series]:
     """Index a condition's metrics by explicit model ID."""
     condition_rows = metrics_table[
-        metrics_table["condition_id"] == condition.name
+        metrics_table["condition_id"] == condition_id(condition)
     ]
     return {
         str(row["model_id"]): row
@@ -259,7 +260,8 @@ def build_explicit_pairwise_comparison(
         rows_by_model = _metric_row_by_model(metrics_table, condition)
         if not required_ids.issubset(rows_by_model):
             raise ValueError(
-                f"condition '{condition.name}' is missing one compared model"
+                f"condition '{condition_id(condition)}' is missing one "
+                "compared model"
             )
 
         reference = rows_by_model[reference_model_id]
@@ -367,7 +369,7 @@ def build_combined_abc_summary(
         rows_by_model = _metric_row_by_model(metrics_table, condition)
         if not set(model_ids).issubset(rows_by_model):
             raise ValueError(
-                f"condition '{condition.name}' is missing A, B, or C"
+                f"condition '{condition_id(condition)}' is missing A, B, or C"
             )
 
         output_row: dict[str, Any] = {
@@ -566,7 +568,7 @@ def run_fixed_robustness_abc_evaluation(
         raise ValueError("threshold must be between 0 and 1")
     if not conditions or not any(item.name == "clean" for item in conditions):
         raise ValueError("fixed A/B/C evaluation requires a clean condition")
-    condition_ids = [item.name for item in conditions]
+    condition_ids = [condition_id(item) for item in conditions]
     if len(condition_ids) != len(set(condition_ids)):
         raise ValueError("fixed condition IDs must be unique")
 
