@@ -59,7 +59,7 @@ def build_and_split_manifest(data_dir, output_dir, dataset_name, generator_name,
             correct_relative_path = Path(meta["new_path"]).relative_to(Path(output_dir)).as_posix()
 
             # Assign a split override for TAMPERED images, otherwise None
-            split_override = "test" if label_val == 2.0 else None
+            split_override = "bonus" if label_val == 2.0 else None
             
             records.append({
                 "image_path": correct_relative_path, "label": label_val,
