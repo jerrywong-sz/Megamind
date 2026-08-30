@@ -22,6 +22,7 @@ from evaluate_fixed_robustness_abc import (
     build_combined_abc_summary,
     build_explicit_pairwise_comparison,
     condition_metadata,
+    run_fixed_robustness_evaluation,
     run_fixed_robustness_abc_evaluation,
 )
 from src.evaluation_conditions import (
@@ -29,6 +30,7 @@ from src.evaluation_conditions import (
     FIXED_CHAIN_CONDITIONS,
     EvaluationCondition,
 )
+from src.evaluation_models import build_model_specs
 
 
 class FixedLogitModel(nn.Module):
@@ -308,3 +310,71 @@ def test_cli_requires_role_specific_checkpoint_names():
     assert args.checkpoint_b_robustness == "b.pt"
     assert args.checkpoint_c_consistency == "c.pt"
     assert args.condition_set == "all-fixed"
+
+
+def test_fixed_runner_supports_two_named_models_and_architecture_overrides(
+    tmp_path,
+    monkeypatch,
+):
+    data_root, manifest_path = _write_fixture(tmp_path)
+    output_dir = tmp_path / "fixed-sid-a-vs-b"
+    architectures = []
+
+    def fake_checkpoint_loader(checkpoint_path, device, architecture=None):
+        architectures.append(architecture)
+        logits = (
+            [-2.0, 2.0, 2.0, -2.0]
+            if Path(checkpoint_path).name == "sid-a.pt"
+            else [-2.0, 2.0, -2.0, 2.0]
+        )
+        return FixedLogitModel(logits), Path(checkpoint_path).stem[0] * 64
+
+    monkeypatch.setattr(
+        abc_evaluation,
+        "load_model_checkpoint",
+        fake_checkpoint_loader,
+    )
+    specs = build_model_specs(
+        checkpoints=("sid-a.pt", "sid-b.pt"),
+        model_ids=("sid_a_clean", "sid_b_robust"),
+        model_titles=("SID A clean", "SID B robust"),
+        architectures=("efficientnet_b0", "efficientnet_b0"),
+    )
+    conditions = (
+        CLEAN_CONDITION,
+        EvaluationCondition(
+            name="fixed_resize_jpeg_test",
+            severity=None,
+            title="Fixed chain test",
+            steps=(("resize", 0.5), ("jpeg", 70)),
+            condition_kind="fixed_chain",
+        ),
+    )
+
+    predictions, metrics, pairwise, summary = run_fixed_robustness_evaluation(
+        data_root=data_root,
+        manifest_path=manifest_path,
+        model_specs=specs,
+        output_dir=output_dir,
+        batch_size=4,
+        num_workers=0,
+        device=torch.device("cpu"),
+        conditions=conditions,
+    )
+
+    assert len(predictions) == 4 * 2 * 2
+    assert len(metrics) == 2 * 2
+    assert set(pairwise) == {"sid_a_clean_vs_sid_b_robust"}
+    assert len(summary) == 2
+    assert architectures == ["efficientnet_b0", "efficientnet_b0"]
+    config_path = (
+        output_dir
+        / "fixed_robustness__sid_a_clean_vs_sid_b_robust__run_config.json"
+    )
+    with config_path.open(encoding="utf-8") as file:
+        config = json.load(file)
+    assert config["num_models"] == 2
+    assert [model["model_title"] for model in config["models"]] == [
+        "SID A clean",
+        "SID B robust",
+    ]
