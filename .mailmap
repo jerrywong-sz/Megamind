@@ -1,0 +1,22 @@
+# Collapses duplicate git identities so `git shortlog` and `git log` show one
+# entry per person. Names match the README "Team member contributions" section.
+#
+# Format: <canonical name> <canonical email> [<old name> <old email>]
+# The two-field form rewrites every commit made from that email address.
+
+# isaacser8 / Ser Yi Zhe -- same email, two display names
+Isaac <isaac.ser@gmail.com>
+
+# Teoh Ke Yi / keyi-11 (same email) and TEOH KE YI (laptop-local email)
+Teoh Ke Yi <keyiteoh11@gmail.com>
+Teoh Ke Yi <keyiteoh11@gmail.com> TEOH KE YI <keyi@TEOHs-MacBook-Air-2.local>
+
+# Tan Teck Heang / TTHeang520 -- personal and university email
+Tan Teck Heang <tanth2005@gmail.com>
+Tan Teck Heang <tanth2005@gmail.com> TTHeang520 <e1528708@u.nus.edu>
+
+# Jerry / jerrywong-sz -- same email, two display names
+Jerry <jalliwo20@gmail.com>
+
+# Single identity, but the GitHub username is not the name used in the README
+Wei Jien <254315756+NGWEIJIEN35@users.noreply.github.com>

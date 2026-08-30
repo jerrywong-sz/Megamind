@@ -722,55 +722,37 @@ C could actually be called significant or not.
 
 ## Team member contributions
 
-**Isaac — Model Lead.** Owned the model architecture and training pipeline,
-and conducted Experiments A/B/C covering clean training, robustness
-augmentation, and consistency training. Main contributions include
-`train.py`, the model definition in `src/models.py`, the consistency loss in
-`src/losses.py`, the experiment configs in `configs/`, and the
-experiment/checkpoint workflow.
+**Isaac — Model Lead.** Owned the model architecture and the training
+pipeline, and ran Experiments A, B and C covering clean training, robustness
+augmentation and consistency training. Main contributions: `train.py`, the
+model definitions in `src/models.py`, the experiment configs in `configs/`,
+and the checkpoint workflow the evaluation scripts read from.
 
-**Jerry — Integration Lead.** Repo setup and initial structure; the
-inference pipeline (`predict.py`) and its smoke tests; the shared
-evaluation-time preprocessing (`get_eval_transform()` in `src/data.py`,
-the single source of truth that keeps training and inference from
-drifting apart) and the `build_model()` interface that `predict.py` and
-`evaluate.py` both consume; error analysis (`scripts/error_analysis.py`,
-`results/error_analysis.md`) and the robustness severity curves
-(`scripts/plot_robustness.py`); and the README, reproduction steps, and
-design-decision notes in `results/decisions.md`.
+**Jerry — Integration Lead.** Repo setup and structure; the inference
+pipeline (`predict.py`) and its smoke tests; the shared evaluation
+preprocessing (`get_eval_transform()` in `src/data.py`) that keeps training
+and inference from drifting apart; the error analysis and robustness-curve
+scripts in `scripts/`; and the README, reproduction steps and
+`results/decisions.md`.
 
 **Teoh Ke Yi — Data and Infrastructure Lead.** Prepared and published the
-datasets the project runs on — CIFAKE (120,000 images; 100,000 train /
-20,000 test) and SID_Set (35,000 images), both formatted and uploaded to
-Kaggle — and established the tampered-image holdout that keeps 3-class data
-out of binary training and evaluation. Owned the data pipeline end to end:
-`src/build_manifest.py` (JPEG standardization to remove format bias,
-SHA-256 de-duplication, 50/50 class balancing, and the
-train/val/test/`bonus` split) and `src/data.py` (manifest-backed dataset
-and split handling, aspect-ratio-preserving resize in the evaluation
-transform, and `worker_init_fn` seeding so DataLoader workers do not draw
-identical augmentations). Also contributed across the training and
-inference paths: `configs/consistency.yaml` and the consistency
-lambda-tuning wiring in `train.py`, epoch and optimizer state in
-checkpoints for resumability, the mean / worst-case AUROC and
-robustness-gap reporting in `evaluate_fixed_robustness_abc.py`, and the
-CLI decision threshold plus the switch to `torch.inference_mode()` in
-`predict.py`.
+CIFAKE and SID_Set datasets the project runs on, and established the
+tampered-image holdout that keeps 3-class data out of binary training and
+evaluation. Owned the data pipeline end to end: `src/build_manifest.py`,
+which produces the balanced, format-normalised manifest, and the
+manifest-backed dataset and split handling in `src/data.py`.
 
-**Wei Jien — Evaluation and Benchmarking Lead.** Designed and implemented
-the full model-evaluation workflow: checkpoint validation, clean
-evaluation, binary metrics, fixed and seeded-random chained robustness
-tests, fair A/B/C comparisons, and reproducible CIFAKE/SID Colab benchmarks
-(`src/metrics.py`, `evaluate.py`, `evaluate_fixed_robustness_abc.py`,
-`evaluate_random_robustness_abc.py`, `src/evaluation_conditions.py`,
-`src/random_chain_conditions.py`). Validated dataset manifests, produced
-per-image predictions, pairwise summaries and false-positive/false-negative
-analysis, added evaluation tests and documentation, and interpreted results
-to guide model selection and retraining.
+**Wei Jien — Evaluation and Benchmarking Lead.** Designed and implemented the
+evaluation workflow end to end: clean evaluation, binary metrics, and the
+fixed and seeded-random chained robustness grids (`src/metrics.py`,
+`evaluate.py`, `evaluate_fixed_robustness_abc.py`,
+`evaluate_random_robustness_abc.py`). Produced the per-image predictions and
+pairwise A/B/C summaries the results tables and error analysis are built
+from.
 
 **Tan Teck Heang — Augmentation and Consistency Training Lead.** Owned the
-robustness augmentation pipeline and consistency-training objective,
-including transform utilities, robustness-aware training support, and
-consistency loss integration. Main contributions include
-`src/augmentations.py`, `src/losses.py`, and related training/evaluation
-configuration for robustness experiments.
+robustness augmentation pipeline and the consistency-training objective:
+the challenge transform implementations in `src/augmentations.py` and the
+paired clean/damaged consistency loss in `src/losses.py`. Between them these
+two modules are what Experiments B and C are actually trained with, and the
+transform set is reused unchanged by the evaluation grid.
