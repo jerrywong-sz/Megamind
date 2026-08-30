@@ -35,7 +35,7 @@ def get_eval_transform() -> transforms.Compose:
 def get_train_transform() -> transforms.Compose:
     """Build the conventional Experiment A training transform."""
     return transforms.Compose([
-        transforms.Resize((256, 256)),
+        transforms.Resize((256)),
         transforms.CenterCrop(224),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
@@ -50,7 +50,7 @@ def get_robust_train_transform() -> transforms.Compose:
     """Build the robustness-augmented Experiment B training transform."""
     return transforms.Compose([
         transforms.Lambda(random_transform),
-        transforms.Resize((256, 256)),
+        transforms.Resize((256)),
         transforms.CenterCrop(224),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
