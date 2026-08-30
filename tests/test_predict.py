@@ -8,6 +8,10 @@ import sys
 from pathlib import Path
 
 from PIL import Image
+import torch
+import torch.nn as nn
+
+import predict
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -123,3 +127,49 @@ def test_predict_handles_empty_input_dir(tmp_path):
         predictions = json.load(f)
 
     assert predictions == []
+
+
+def test_load_model_uses_checkpoint_architecture_metadata(
+    tmp_path,
+    monkeypatch,
+):
+    def make_model():
+        return nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(3 * 8 * 8, 1),
+        )
+
+    original_model = make_model()
+
+    checkpoint_path = tmp_path / "model.pt"
+
+    torch.save(
+        {
+            "architecture": "convnext_tiny",
+            "model_state": original_model.state_dict(),
+        },
+        checkpoint_path,
+    )
+
+    requested = {}
+
+    def fake_build_model(
+        pretrained,
+        architecture="efficientnet_b0",
+    ):
+        requested["architecture"] = architecture
+        return make_model()
+
+    monkeypatch.setattr(
+        predict,
+        "build_model",
+        fake_build_model,
+    )
+
+    loaded_model = predict.load_model(
+        checkpoint_path,
+        torch.device("cpu"),
+    )
+
+    assert requested["architecture"] == "convnext_tiny"
+    assert loaded_model is not None

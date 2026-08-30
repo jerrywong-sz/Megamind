@@ -21,14 +21,21 @@ def set_seed(seed):
         torch.cuda.manual_seed_all(seed)
 
 
-def save_checkpoint(model, optimizer, epoch, checkpoint_path):
-    """Save model weights to disk."""
+def save_checkpoint(
+    model,
+    optimizer,
+    epoch,
+    checkpoint_path,
+    architecture: str = "efficientnet_b0",
+):
+    """Save model weights and architecture metadata to disk."""
     checkpoint_path = Path(checkpoint_path)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
 
     torch.save(
         {
             "epoch": epoch,
+            "architecture": architecture,
             "model_state": model.state_dict(),
             "optimizer_state": optimizer.state_dict(),
         },
@@ -250,6 +257,10 @@ def fit(
                 optimizer,
                 epoch,
                 checkpoint_path,
+                architecture=config.get(
+                    "model_name",
+                    "efficientnet_b0",
+                ),
             )
 
             print(

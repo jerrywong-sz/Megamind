@@ -30,8 +30,12 @@ def find_images(input_dir: Path) -> list[Path]:
     )
 
 
-def load_model(checkpoint: Path | None, device: torch.device):
-    """Load a trained model from checkpoint, or None to signal random fallback."""
+def load_model(
+    checkpoint: Path | None,
+    device: torch.device,
+    architecture: str | None = None,
+):
+    """Load a trained model, supporting architecture-aware checkpoints."""
     if checkpoint is None:
         print(
             "WARNING: no --checkpoint provided. Predictions will be RANDOM, "
@@ -41,13 +45,60 @@ def load_model(checkpoint: Path | None, device: torch.device):
         )
         return None
 
-    model = build_model(pretrained=False)
-    checkpoint_data = torch.load(checkpoint, map_location=device)
-    # Handle both old weights-only checkpoints and new dictionary checkpoints
-    state_dict = checkpoint_data.get("model_state", checkpoint_data) if isinstance(checkpoint_data, dict) else checkpoint_data
-    model.load_state_dict(state_dict)
+    checkpoint_data = torch.load(
+        checkpoint,
+        map_location=device,
+        weights_only=False,
+    )
+
+    if isinstance(checkpoint_data, dict):
+        checkpoint_architecture = checkpoint_data.get(
+            "architecture"
+        )
+        state_dict = checkpoint_data.get(
+            "model_state",
+            checkpoint_data,
+        )
+    else:
+        checkpoint_architecture = None
+        state_dict = checkpoint_data
+
+    if (
+        checkpoint_architecture is not None
+        and architecture is not None
+        and checkpoint_architecture != architecture
+    ):
+        raise ValueError(
+            "Checkpoint architecture "
+            f"'{checkpoint_architecture}' conflicts with "
+            f"requested architecture '{architecture}'."
+        )
+
+    resolved_architecture = (
+        checkpoint_architecture
+        or architecture
+        or "efficientnet_b0"
+    )
+
+    model = build_model(
+        pretrained=False,
+        architecture=resolved_architecture,
+    )
+
+    try:
+        model.load_state_dict(
+            state_dict,
+            strict=True,
+        )
+    except RuntimeError as error:
+        raise ValueError(
+            "Checkpoint does not match architecture "
+            f"'{resolved_architecture}': {checkpoint}"
+        ) from error
+
     model.to(device)
     model.eval()
+
     return model
 
 
@@ -55,6 +106,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input_dir", required=True, type=Path, help="Directory of images (searched recursively)")
     parser.add_argument("--checkpoint", default=None, type=Path, help="Path to a trained model checkpoint (.pt)")
+    parser.add_argument(
+        "--architecture",
+        default=None,
+        help=(
+            "Model architecture override for legacy checkpoints "
+            "without architecture metadata."
+        ),
+    )
     parser.add_argument("--output", required=True, type=Path, help="Path to write the output JSON to")
     parser.add_argument("--batch_size", default=32, type=int, help="Number of images per inference batch")
     parser.add_argument("--threshold", default=0.5, type=float, help="Probability threshold for the positive class (only used with --include-label)")
@@ -74,7 +133,11 @@ def main():
         sys.exit(1)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = load_model(args.checkpoint, device)
+    model = load_model(
+        args.checkpoint,
+        device,
+        architecture=args.architecture,
+    )
     transform = get_eval_transform()
 
     image_paths = find_images(args.input_dir)
