@@ -126,16 +126,6 @@ Labels are assigned from the folder name: `REAL` → `0.0`, `FAKE` → `1.0`,
 
 ### 4. Build the manifest CSV
 
-> ⚠️ **Known issue — this step does not currently run on `main`.**
-> `src/build_manifest.py` raises `IndexError` at the 70/15/15 split
-> (`np.split` returns plain numpy arrays rather than DataFrames with the
-> installed pandas/numpy, so `train['split'] = ...` fails). Calling
-> `build_and_split_manifest()` as a function fails earlier still, with
-> `NameError: name 'args' is not defined`, because the body reads the
-> module-level `args` for `--force_split` instead of taking it as a
-> parameter. Both are being fixed — until then, treat the commands below
-> as the intended interface rather than something that completes today.
-
 `src/build_manifest.py` has a five-argument CLI (note: flags use
 underscores, unlike `train.py`/`evaluate.py` which use hyphens):
 
@@ -171,10 +161,18 @@ What it does:
   [results/decisions.md](results/decisions.md).
 - Balances `REAL`/`FAKE` 50/50 and splits them 70/15/15 into
   train/val/test.
-- Holds `TAMPERED` rows out of that balancing and split entirely, giving
-  them their own split value.
+- Holds `TAMPERED` rows out of that balancing and out of the 70/15/15
+  split. ⚠️ They are then assigned `split = "test"`, which is the **same
+  value the binary test rows get** — so filtering on `split == "test"`
+  alone returns a mix of binary and 3-class tampered rows. Filter on
+  `label` as well (`label` is `0.0`/`1.0` for binary, `2.0` for tampered).
+  See [results/decisions.md](results/decisions.md) — a dedicated `bonus`
+  value was the intent and this is still open.
 - Writes `image_path` as the path of the **re-saved** file relative to
-  `--output_dir`.
+  `--output_dir`. Note the re-saved file keeps its **original extension**
+  even though its bytes are JPEG — a `.png` input stays named `.png`.
+  Loading is unaffected (Pillow reads by content), but the output
+  directory is misleading to inspect by hand.
 
 Run once per dataset. TODO: there's still no built-in way to merge
 multiple datasets' manifests into one combined CSV for
@@ -593,9 +591,94 @@ wrong) hasn't been done either.
 
 ## Limitations and what we'd improve with more time
 
-TODO: known failure modes, transformation strengths not covered by
-training/eval, and any planned improvements that didn't make the hackathon
-deadline.
+Every figure below comes from
+[results/error_analysis.md](results/error_analysis.md) and the CSVs in
+`results/`.
+
+**Everything was trained and evaluated on CIFAKE alone.** That means 32×32
+images with Stable Diffusion 1.4 as the only generator, on a single
+validation split of 14,724 images. We have **no evidence** about
+high-resolution images or about generators the model never saw. SID_Set was
+obtained but never trained on, and the WildFake cross-generator benchmark
+was never run. Our robustness claim is therefore "robust to
+transformations *within* CIFAKE", not "robust in general" — the headline
+accuracies would very likely not survive a change of generator or
+resolution.
+
+**Consistency training (Experiment C) produced no measurable improvement.**
+Across the 16 single-transform conditions, C beat B in 9 and lost in 7,
+with a mean difference of −0.09 percentage points and a maximum absolute
+difference of 0.64pp (1.39pp including chained conditions). On clean images
+C is 98.21% against B's 98.03%. Differences that small on a single
+validation split are indistinguishable from noise, so we cannot claim the
+consistency loss did anything. Essentially all of the robustness gain comes
+from augmentation (A→B); adding the consistency penalty on top (B→C) added
+nothing we can measure.
+
+**The clean baseline collapses under degradation.** Experiment A falls from
+98.32% clean accuracy to **53.67% at noise σ=0.10** — barely above the 50%
+chance rate for a balanced binary task — along with 57.75% at blur σ=2.0,
+60.74% at resize 0.25×, and 76.52% at crop 80%. Experiment B holds at
+94.91%, 91.77%, 91.37% and 95.96% on those same conditions. Across all 15
+transformed conditions the baseline suffers 38,504 transformation flips
+(images it got right clean and wrong after a transform) versus B's 5,611.
+This is the single clearest result we have, and it is the reason
+augmentation is in the final pipeline.
+
+**Robustness costs a little clean-set precision.** On clean validation
+images Experiment B has a higher false-positive rate than A: **2.69%
+versus 1.97%** (195 versus 143 false positives out of 7,261 real images),
+against a lower false-negative rate (1.27% versus 1.41%). Augmentation
+shifts the decision boundary slightly toward calling images AI-generated.
+The trade is favourable overall, but it moves in the direction the
+challenge explicitly warns about — false accusations on genuine
+photographs — and we did not tune the threshold to compensate.
+
+**40 images defeat Experiment B under all 16 conditions.** No amount of
+augmentation moves them, which suggests label noise or intrinsic ambiguity
+rather than a robustness failure. We did not open these images to check.
+They are a small fraction of 14,724, but they are the most likely place to
+find a mislabelled subset of CIFAKE, and inspecting them is the cheapest
+remaining diagnostic.
+
+**We could not break errors down by source or generator.** The prediction
+dump's `source` column is null in 100% of rows, and `dataset` and
+`generator` are constant (`CIFAKE`, `SD1.4`) across every row — including
+real images, where `generator` is a dataset-level tag rather than a
+per-image attribute. The only available split was real versus AI. Any
+claim about *which kinds* of images fail is therefore out of reach with
+the data we logged.
+
+**Model outputs are strongly bimodal, and only Experiment B's confidence
+is trustworthy.** Just 8.3% (A) and 7.7% (B) of predictions land in the
+middle 0.20–0.80 band; 12.1% (A) and 7.0% (B) sit at exactly 1.0. That
+saturation is expected from a single-logit network trained with
+`BCEWithLogitsLoss` to near-zero training loss. Bimodality alone is not a
+defect — but calibration differs sharply between the two models. In B's
+≥0.99 band, 99.0% of images really are AI; in A's >0.9 band, only 85.8%
+are, and images A scores below 0.1 are still AI 11.9% of the time. So B's
+`pred` values are usable as probabilities for thresholding or ranking;
+A's are not. (Measured across all 16 conditions, so A's figure is dragged
+down substantially by the conditions where it collapses.)
+
+**A known data-pipeline defect is still open.** `src/build_manifest.py`
+assigns tampered SID_Set images `split = "test"` rather than a dedicated
+`bonus` value, so a naive `split == "test"` filter silently mixes 3-class
+tampered rows into a binary evaluation. On a representative fixture the
+`test` split came out majority-tampered. Nothing in our reported results is
+affected — they are all CIFAKE, which has no tampered images — but this
+would corrupt the first SID_Set evaluation anyone runs. See
+[results/decisions.md](results/decisions.md).
+
+**What we'd do with more time.** In priority order: retrain on SID_Set so
+the detector sees high-resolution images and a second generator; run the
+held-out WildFake subset (COCO val2017 + DALL·E Advanced) to get a real
+cross-generator generalization number, which is currently our largest
+unknown; and manually inspect the 40 persistent failures to establish
+whether CIFAKE carries label noise. Beyond that: tune the decision
+threshold to claw back Experiment B's false-positive rate, and re-run the
+A/B/C ablation across multiple seeds so a 0.64pp difference between B and
+C could actually be called significant or not.
 
 ## Team member contributions
 
