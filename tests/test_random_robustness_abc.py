@@ -161,3 +161,94 @@ def test_random_cli_defaults_to_five_reproducible_trials():
     ])
 
     assert tuple(args.trial_seeds) == DEFAULT_TRIAL_SEEDS
+
+
+def test_random_runner_supports_three_custom_checkpoint_labels(
+    tmp_path,
+    monkeypatch,
+):
+    data_root, manifest_path = _fixture(tmp_path)
+    output_dir = tmp_path / "custom-results"
+
+    def fake_checkpoint_loader(checkpoint_path, device):
+        filename = Path(checkpoint_path).name
+        logits = {
+            "old.pt": [-2.0, -2.0, -2.0, -2.0],
+            "sid-a.pt": [-2.0, 2.0, -2.0, 2.0],
+            "sid-b.pt": [-2.0, 2.0, 2.0, -2.0],
+        }[filename]
+        return FixedLogitModel(logits), filename[0] * 64
+
+    monkeypatch.setattr(
+        random_evaluation,
+        "load_model_checkpoint",
+        fake_checkpoint_loader,
+    )
+    outputs = run_random_standard_3_abc_evaluation(
+        dataset_id="SID_SET",
+        data_root=data_root,
+        manifest_path=manifest_path,
+        checkpoint_a_baseline=tmp_path / "old.pt",
+        checkpoint_b_robustness=tmp_path / "sid-a.pt",
+        checkpoint_c_consistency=tmp_path / "sid-b.pt",
+        output_dir=output_dir,
+        batch_size=4,
+        num_workers=0,
+        device=torch.device("cpu"),
+        trial_seeds=(42,),
+        model_a_id="best_old",
+        model_a_title="Best old checkpoint",
+        model_b_id="sid_a_clean",
+        model_b_title="SID A clean training",
+        model_c_id="sid_b_robust",
+        model_c_title="SID B robustness training",
+    )
+
+    expected_ids = {"best_old", "sid_a_clean", "sid_b_robust"}
+    assert set(outputs["predictions"]["model_id"]) == expected_ids
+    assert set(outputs["overall"]["model_id"]) == expected_ids
+    assert outputs["headline"]["evaluation_title"].iloc[0] == (
+        "Random standard-3 robustness evaluation — Best old checkpoint vs "
+        "SID A clean training vs SID B robustness training"
+    )
+    assert set(outputs["a_vs_b"]["reference_model_id"]) == {"best_old"}
+    assert set(outputs["a_vs_b"]["candidate_model_id"]) == {"sid_a_clean"}
+
+    config_path = output_dir / "random_standard_3__run_config.json"
+    with config_path.open(encoding="utf-8") as config_file:
+        config = json.load(config_file)
+    assert [model["model_id"] for model in config["models"]] == [
+        "best_old",
+        "sid_a_clean",
+        "sid_b_robust",
+    ]
+    assert config["output_files"]["overall"] == (
+        "random_standard_3__best_old_vs_sid_a_clean_vs_sid_b_robust"
+        "__overall_summary.csv"
+    )
+    for filename in config["output_files"].values():
+        assert (output_dir / filename).is_file()
+
+
+def test_random_cli_accepts_generic_checkpoint_aliases_and_custom_labels():
+    args = build_argument_parser().parse_args([
+        "--dataset-id", "SID_SET",
+        "--data-root", "images",
+        "--manifest", "manifest.csv",
+        "--checkpoint-a", "old.pt",
+        "--checkpoint-b", "sid-a.pt",
+        "--checkpoint-c", "sid-b.pt",
+        "--model-a-id", "best_old",
+        "--model-a-title", "Best old checkpoint",
+        "--model-b-id", "sid_a_clean",
+        "--model-b-title", "SID A clean training",
+        "--model-c-id", "sid_b_robust",
+        "--model-c-title", "SID B robustness training",
+        "--output-dir", "results",
+    ])
+
+    assert args.checkpoint_a_baseline == "old.pt"
+    assert args.checkpoint_b_robustness == "sid-a.pt"
+    assert args.checkpoint_c_consistency == "sid-b.pt"
+    assert args.model_a_id == "best_old"
+    assert args.model_c_title == "SID B robustness training"
