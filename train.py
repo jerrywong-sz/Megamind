@@ -300,7 +300,11 @@ def main():
     )
 
     model = build_model(
-        pretrained=config["pretrained"]
+        pretrained=config["pretrained"],
+        architecture=config.get(
+            "model_name",
+            "efficientnet_b0",
+        ),
     ).to(device)
 
     criterion = nn.BCEWithLogitsLoss()
@@ -346,6 +350,7 @@ def main():
         device=device,
         epochs=config["epochs"],
         checkpoint_path=checkpoint_path,
+        config=config,
         amp_enabled=amp_enabled,
     )
 

@@ -76,6 +76,7 @@ def test_training_and_validation_loops_run():
         criterion,
         optimizer,
         device,
+        config={"train_mode": "clean"},
     )
 
     val_loss, val_accuracy = validate_one_epoch(
@@ -116,6 +117,7 @@ def test_fit_saves_best_checkpoint(tmp_path):
         device=device,
         epochs=2,
         checkpoint_path=checkpoint_path,
+        config={"train_mode": "clean"},
     )
 
     assert len(history) == 2
@@ -124,12 +126,19 @@ def test_fit_saves_best_checkpoint(tmp_path):
     # Make sure the saved checkpoint can actually be loaded.
     loaded_model = make_tiny_model()
 
-    state_dict = torch.load(
+    checkpoint = torch.load(
         checkpoint_path,
         map_location="cpu",
+        weights_only=False,
     )
 
-    loaded_model.load_state_dict(state_dict)
+    assert "model_state" in checkpoint
+    assert "optimizer_state" in checkpoint
+    assert "epoch" in checkpoint
+
+    loaded_model.load_state_dict(
+        checkpoint["model_state"]
+    )
 
 
 def test_training_loop_accepts_metadata():
@@ -175,6 +184,7 @@ def test_training_loop_accepts_metadata():
         criterion,
         optimizer,
         device,
+        config={"train_mode": "clean"},
     )
 
     assert loss >= 0
