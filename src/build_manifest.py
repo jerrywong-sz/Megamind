@@ -33,7 +33,7 @@ def process_and_resave_image(img_path, output_dir, relative_path):
     except Exception:
         return None
 
-def build_and_split_manifest(data_dir, output_dir, dataset_name, generator_name, output_csv):
+def build_and_split_manifest(data_dir, output_dir, dataset_name, generator_name, output_csv, force_split=None):
     records = []
     seen_hashes = set()
     
@@ -83,8 +83,8 @@ def build_and_split_manifest(data_dir, output_dir, dataset_name, generator_name,
     if not df_tampered.empty:
         df_tampered['split'] = df_tampered['split_override']
 
-    if args.force_split:
-        df_balanced['split'] = args.force_split
+    if force_split:
+        df_balanced['split'] = force_split
         final_manifest = pd.concat([df_balanced, df_tampered]).drop(columns=['split_override'])
     else:
         # Split 70/15/15 for Binary
@@ -107,5 +107,5 @@ if __name__ == "__main__":
     
     build_and_split_manifest(
         args.data_dir, args.output_dir, 
-        args.dataset_name, args.generator, args.output_csv
+        args.dataset_name, args.generator, args.output_csv, args.force_split
     )
