@@ -402,6 +402,31 @@ transform-inclusion breakdowns, every per-image chain assignment, all
 per-image predictions, false positives and false negatives, clean-to-damaged
 prediction changes, checkpoint hashes, and the complete random policy.
 
+The same evaluator can compare any three compatible checkpoints. Supply
+explicit IDs and titles so exported tables describe the actual models instead
+of incorrectly presenting every run as the original A/B/C experiment:
+
+```bash
+python evaluate_random_robustness_abc.py \
+  --dataset-id SID_SET \
+  --data-root <sid_dataset_root> \
+  --manifest <sid_manifest.csv> \
+  --checkpoint-a <best_old_checkpoint.pt> \
+  --model-a-id best_old --model-a-title "Best old CIFAKE checkpoint" \
+  --checkpoint-b <experiment_sid_a_clean_best.pt> \
+  --model-b-id sid_a_clean --model-b-title "SID A clean training" \
+  --checkpoint-c <experiment_sid_b_robust_best.pt> \
+  --model-c-id sid_b_robust --model-c-title "SID B robustness training" \
+  --output-dir results/sid_best_old_vs_sid_a_vs_sid_b \
+  --split val \
+  --trial-seeds 42 43 44 45 46 \
+  --device auto
+```
+
+Model IDs must be unique lowercase identifiers containing letters, numbers,
+or underscores. They are used in column names and filenames; titles are the
+human-readable descriptions shown in the results.
+
 ### 7. Run predict.py for the final submission
 
 This step is real today — verified against the actual CLI:
