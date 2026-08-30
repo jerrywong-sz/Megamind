@@ -100,8 +100,10 @@ have time to run.
 - **Kaggle** — CIFAKE dataset access
 - **Git / GitHub** — version control, pull-request review across five people
 - **Git Bash on Windows** — local shell
-- **pytest** — automated tests (54 tests covering augmentations, metrics,
-  losses, the data pipeline, the evaluation runners, and the inference CLI)
+- **pytest** — automated tests (60 tests, all passing, covering the
+  augmentation and consistency-loss modules, the metrics, the data pipeline,
+  the model builder, the training loop, the evaluation runners, and the
+  inference CLI)
 - **Claude Code** — development assistance
 
 ## 3. Models used
