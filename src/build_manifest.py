@@ -88,7 +88,13 @@ def build_and_split_manifest(data_dir, output_dir, dataset_name, generator_name,
         final_manifest = pd.concat([df_balanced, df_tampered]).drop(columns=['split_override'])
     else:
         # Split 70/15/15 for Binary
-        train, val, test = np.split(df_balanced, [int(.7*len(df_balanced)), int(.85*len(df_balanced))])
+        n = len(df_balanced)
+        idx1 = int(0.7 * n)
+        idx2 = int(0.85 * n)
+        
+        train = df_balanced.iloc[:idx1].copy()
+        val = df_balanced.iloc[idx1:idx2].copy()
+        test = df_balanced.iloc[idx2:].copy()
         train['split'], val['split'], test['split'] = 'train', 'val', 'test'
         final_manifest = pd.concat([train, val, test, df_tampered]).drop(columns=['split_override'])
 
