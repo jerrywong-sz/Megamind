@@ -54,3 +54,52 @@ def test_convnext_forward():
 
     assert logits.shape == (2, 1)
     assert torch.isfinite(logits).all()
+
+
+def test_dinov2_forward(monkeypatch):
+    class FakeDinoBackbone(torch.nn.Module):
+        embed_dim = 8
+
+        def forward(self, images):
+            return torch.zeros(
+                images.shape[0],
+                self.embed_dim,
+                device=images.device,
+            )
+
+    def fake_hub_load(
+        repository,
+        model_name,
+        pretrained=True,
+    ):
+        assert repository == "facebookresearch/dinov2"
+        assert model_name == "dinov2_vits14"
+        assert pretrained is False
+
+        return FakeDinoBackbone()
+
+    monkeypatch.setattr(
+        torch.hub,
+        "load",
+        fake_hub_load,
+    )
+
+    model = build_model(
+        pretrained=False,
+        architecture="dinov2_vits14",
+    )
+
+    images = torch.randn(
+        2,
+        3,
+        224,
+        224,
+    )
+
+    model.eval()
+
+    with torch.no_grad():
+        logits = model(images)
+
+    assert logits.shape == (2, 1)
+    assert torch.isfinite(logits).all()
