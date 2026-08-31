@@ -1,5 +1,18 @@
 # techjam-aigc-detector
 
+- [Project overview](#project-overview)
+- [At a glance](#at-a-glance)
+- [Setup and installation](#setup-and-installation)
+- [Quick start](#quick-start)
+- [Usage](#usage)
+- [Reproducing results](#reproducing-results)
+- [Results tables](#results-tables)
+  - [SID_Set results — architecture comparison](#sid_set-results--architecture-comparison)
+  - [Cross-domain generalization](#cross-domain-generalization-what-sid-accuracy-does-not-tell-you)
+  - [Synthesis: the problem is the training distribution](#synthesis-the-problem-is-the-training-distribution)
+- [Limitations and what we'd improve with more time](#limitations-and-what-wed-improve-with-more-time)
+- [Team member contributions](#team-member-contributions)
+
 ## Project overview
 
 A binary image classifier that detects whether an image is AI-generated,
@@ -37,6 +50,23 @@ scale — **1.14 ms per image** — and our false-positive analysis (clean-set
 FPR rises from 1.97% to 2.69% with robustness training) is why the score
 should never stand alone as an accusation against a real photograph.
 
+## At a glance
+
+- **Submit this checkpoint:** `effnet_b0_sid_cifake_experiment_b_best.pt` —
+  EfficientNet-B0 trained on SID_Set **and** CIFAKE
+  ([download](#getting-the-checkpoints)).
+- **99.31% on SID, 97.19% on CIFAKE.** Single-dataset models match it on
+  their own data but fall to **49.4%** on the generator they never saw —
+  chance, on a set where predicting "real" for everything scores 49.31%.
+- **Key finding:** training-source diversity mattered far more than backbone
+  or training objective. A second data source moved cross-domain accuracy by
+  ~48 points; tripling the backbone moved it by 0.03, and the consistency
+  loss (Experiment C) by nothing measurable.
+- **EfficientNet-B0 matched ConvNeXt-Tiny at 3.6× the speed** — 1.14 ms vs
+  4.12 ms per image, with no condition reaching McNemar p < 0.05.
+- **Not proven:** generalization to a *third*, unseen generator. WildFake is
+  held out and unrun.
+
 ## Setup and installation
 
 Requires Python 3.10+.
@@ -56,6 +86,32 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
+
+## Quick start
+
+Run the detector on a folder of images, without reading anything else.
+
+**1. Download the recommended checkpoint** — the mixed SID+CIFAKE model:
+
+<https://drive.google.com/file/d/1bz3KfWIPr422c7rGM9hYH3zs6wSr7pc7/view>
+
+Verify it with the SHA-256 in [Getting the checkpoints](#getting-the-checkpoints),
+which also explains why this checkpoint rather than a higher-scoring one.
+
+**2. Run inference:**
+
+```bash
+python predict.py --input_dir <folder_of_images> --checkpoint effnet_b0_sid_cifake_experiment_b_best.pt --output results/preds.json
+```
+
+The output is a JSON list with one row per image, each exactly
+`{"image_path": ..., "pred": ...}`, where `pred` is the probability the image
+is AI-generated. Subdirectories are searched recursively; unreadable files are
+skipped with a warning and recorded at `pred: 0.5`.
+
+Without `--checkpoint` the script exits with an error rather than emitting
+random numbers — see [`--allow-random`](#usage) if you want to smoke-test the
+pipeline before downloading anything.
 
 ## Usage
 
@@ -237,10 +293,41 @@ by hand:
   — SID real, SID fake, CIFAKE real, CIFAKE fake — with **seed 42**.
 - The validation set was balanced the same way.
 
-No tooling was added to the repository for any of this. So the numbers are
-recorded, but reproducing them means rebuilding the merge by hand and
-trusting that you matched it, rather than running one command and getting
-the same file.
+The concat and write-out step looked like this — enough to attempt the
+merge rather than infer it:
+
+```python
+import pandas as pd
+
+sid = pd.read_csv("sid_manifest.csv")
+cifake = pd.read_csv("cifake_manifest.csv")
+
+combined = pd.concat([sid, cifake], ignore_index=True)
+
+# Normalize the two fields that differ between the per-dataset manifests, so
+# rows from both are addressable in one frame.
+combined["path"] = combined["path"].astype(str)
+combined["source"] = combined["source"].fillna(combined["dataset"])
+
+# Balance each split to an equal count per (dataset, label) group -- the four
+# groups are SID real, SID fake, CIFAKE real, CIFAKE fake.
+PER_GROUP = 11_888  # training set; validation was balanced the same way
+balanced = (
+    combined[combined["split"] == "train"]
+    .groupby(["dataset", "label"], group_keys=False)
+    .apply(lambda g: g.sample(n=PER_GROUP, random_state=42))
+)
+
+balanced.to_csv("sid_cifake_manifest.csv", index=False)
+```
+
+**That snippet is a reconstruction, not the code that ran.** The original was
+executed interactively in a Kaggle notebook and not saved, so the grouping
+keys and column names above may not match the real manifests exactly, and
+`PER_GROUP` applies to training only — validation used the same procedure at
+its own size, which we did not record. Reproducing the mixed model means
+rebuilding the merge and trusting that you matched it, rather than running
+one command and getting the same file.
 
 **Future work:** a `--manifests a.csv b.csv` merge mode on
 `src/build_manifest.py` that concatenates, normalizes the shared columns and
