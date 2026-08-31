@@ -1,0 +1,105 @@
+{
+  "evaluation_title": "Random standard-3 robustness evaluation — Old SID B - SID-only robustness training vs New Mixed B - SID and CIFAKE robustness training",
+  "evaluation_type": "seeded_per_image_random_chain",
+  "dataset_id": "CIFAKE",
+  "data_root": "/content/cifake_data",
+  "manifest_path": "/content/cifake_manifest.csv",
+  "split": "val",
+  "threshold": 0.5,
+  "batch_size": 64,
+  "num_workers": 2,
+  "device": "cuda",
+  "random_policy": "random_standard_3",
+  "chain_length": 3,
+  "distinct_transform_types_per_chain": true,
+  "random_order": true,
+  "num_models": 2,
+  "trial_seeds": [
+    42,
+    43,
+    44,
+    45,
+    46
+  ],
+  "seed_identity": "policy + dataset_id + image_path + trial_seed",
+  "parameter_grid": {
+    "jpeg": [
+      90,
+      70,
+      50,
+      30
+    ],
+    "blur": [
+      0.5,
+      1.0,
+      2.0
+    ],
+    "resize": [
+      0.5,
+      0.25
+    ],
+    "noise": [
+      0.02,
+      0.05,
+      0.1
+    ],
+    "colour": [
+      -0.2,
+      0.2
+    ],
+    "crop": [
+      0.8
+    ]
+  },
+  "label_convention": {
+    "0": "real",
+    "1": "AI-generated"
+  },
+  "models": [
+    {
+      "model_id": "old_sid_b",
+      "model_title": "Old SID B - SID-only robustness training",
+      "architecture_override": "efficientnet_b0",
+      "path": "/content/experiment_sid_b_robust_best.pt",
+      "sha256": "918083148a04149dd2209ae21810aa4279583e57f687b4b63d9300a5aae64d55"
+    },
+    {
+      "model_id": "mixed_sid_cifake_b",
+      "model_title": "New Mixed B - SID and CIFAKE robustness training",
+      "architecture_override": "efficientnet_b0",
+      "path": "/content/effnet_b0_sid_cifake_experiment_b_best.pt",
+      "sha256": "9159a9d4ceb7fccd3eee24c3ddf9600c79c8abf1444cb0646b93ac66fd3b5c44"
+    }
+  ],
+  "reported_metrics": [
+    "num_samples",
+    "threshold",
+    "true_negatives",
+    "false_positives",
+    "false_negatives",
+    "true_positives",
+    "accuracy",
+    "balanced_accuracy",
+    "precision",
+    "recall",
+    "f1",
+    "auroc",
+    "auprc",
+    "false_positive_rate",
+    "false_negative_rate",
+    "brier_score"
+  ],
+  "output_files": {
+    "predictions": "random_standard_3__old_sid_b_vs_mixed_sid_cifake_b__per_image_predictions.csv",
+    "assignments": "random_standard_3__per_image_chain_assignments.csv",
+    "clean_predictions": "random_standard_3__old_sid_b_vs_mixed_sid_cifake_b__clean_predictions.csv",
+    "trial_metrics": "random_standard_3__old_sid_b_vs_mixed_sid_cifake_b__trial_metrics.csv",
+    "overall": "random_standard_3__old_sid_b_vs_mixed_sid_cifake_b__overall_summary.csv",
+    "headline": "random_standard_3__old_sid_b_vs_mixed_sid_cifake_b__headline.csv",
+    "patterns": "random_standard_3__chain_pattern_breakdown.csv",
+    "inclusion": "random_standard_3__transform_inclusion_breakdown.csv",
+    "errors": "random_standard_3__false_positives_and_false_negatives.csv",
+    "config": "random_standard_3__run_config.json",
+    "old_sid_b_vs_mixed_sid_cifake_b": "random_standard_3__old_sid_b_vs_mixed_sid_cifake_b.csv"
+  }
+}

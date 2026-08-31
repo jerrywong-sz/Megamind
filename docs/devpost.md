@@ -177,10 +177,27 @@ together recovers almost all of the loss on CIFAKE: clean accuracy 49.41% →
 0.50–0.65 band to **0.958–0.996**, recall on AI images 0.21% → 98.08%. Its
 worst condition is blur σ2.0 at 87.75%.
 
+Under *randomly chained* damage on CIFAKE (3 transforms per image, 5 trials,
+73,620 pooled predictions) the mixed model holds **84.33%** pooled accuracy
+with AUROC **0.942** and a 25.79% false-negative rate, against the SID-only
+model's 49.66%, AUROC **0.515** and a **97.74%** false-negative rate.
+
+**One caveat about how to read that table.** The SID-only model's
+clean-correct retention (98.22%) is *higher* than the mixed model's
+(85.41%), and its accuracy under damage is marginally *higher* than its
+clean accuracy — a negative drop. Neither is robustness. It predicts "real"
+for essentially every image (recall on AI images 2.26%, false-negative rate
+97.74%), so damage cannot change an answer that never depended on the input:
+it consistently keeps the real images it gets right and consistently misses
+the AI images. A constant classifier is trivially stable. Retention and drop
+measure consistency, not correctness. The mixed model loses 12.86 points
+from clean to chained precisely because it is making real decisions that
+damage can disrupt.
+
 **But the obvious question is unanswered:** the mixed model has **not been
-evaluated on SID_Set**. We do not know its SID accuracy, whether it gave up
-any of the 99.78% the SID-only model reached, or how it behaves under
-chained damage. Adding a dataset to training fixed performance on that
+evaluated on SID_Set**, under single transforms or chained damage. We do not
+know its SID accuracy, or whether it gave up any of the 99.78% the SID-only
+model reached. Adding a dataset to training fixed performance on that
 dataset, which is nearly tautological; whether it costs anything on the
 first is untested.
 

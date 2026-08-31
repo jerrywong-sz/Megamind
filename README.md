@@ -792,14 +792,57 @@ Recall on AI images goes from 0.21% to 98.08%. The worst condition is blur
 σ2.0 at 87.75%, still 38pp above the model it replaces. Source:
 [results/cifake_mixed_model/robustness_metrics.csv](results/cifake_mixed_model/robustness_metrics.csv).
 
-> **The obvious question is unanswered.** The mixed model has **not been
-> evaluated on SID_Set**. We do not know what its SID accuracy is, whether
-> it gave up any of the 99.78% the SID-only model reached, or how it behaves
-> under chained damage. Adding a second dataset to training fixed
-> performance on that dataset — which is close to tautological. Whether it
-> costs anything on the first is untested, and a judge should read the
-> CIFAKE numbers above with that gap in mind. This is now the most valuable
-> outstanding run.
+#### Mixed model under chained damage — and a column that misleads
+
+The same two models under randomly chained damage on CIFAKE: 3 transforms
+per image, 5 trials (seeds 42–46) over 14,724 images, 73,620 pooled
+predictions.
+
+| | Old SID-B (SID-only) | Mixed SID+CIFAKE B |
+|---|---:|---:|
+| Clean accuracy | 49.41% | 97.19% |
+| Pooled chained accuracy | 49.66% | **84.33%** |
+| Trial std. dev. | 0.12pp | 0.29pp |
+| Pooled AUROC | 0.515 | **0.942** |
+| False-negative rate | **97.74%** | 25.79% |
+| False-positive rate | 1.61% | 5.27% |
+| Recall on AI images | 2.26% | 74.21% |
+| Accuracy drop from clean | **−0.26pp** | +12.86pp |
+| Clean-correct retention | **98.22%** | 85.41% |
+
+**Two columns in that table look like wins for the SID-only model and are
+not.** Its clean-correct retention (98.22%) is *higher* than the mixed
+model's (85.41%), and its accuracy under damage is marginally *higher* than
+its clean accuracy — a negative drop. Neither is robustness.
+
+Old SID-B predicts "real" for essentially every image: false-positive rate
+1.61%, recall on AI images 2.26%, false-negative rate **97.74%**. Damage
+cannot change an answer that does not depend on the input. It keeps getting
+the real images right, keeps missing the AI images, and both behaviours
+survive any transform you apply — so retention is near-perfect and the drop
+is ~zero. **A constant classifier is trivially stable.** Retention and drop
+measure *consistency*, not correctness, and they are only meaningful for a
+model that is actually discriminating. Read them next to AUROC (0.515,
+barely above random) and recall (2.26%), which are not flattering.
+
+The mixed model's numbers are the honest kind. It loses 12.86 points from
+clean to chained and retains 85.41% of its clean-correct answers, because it
+is making real decisions that damage can genuinely disrupt. Its pooled AUROC
+of 0.942 against 0.515 is the comparison that matters.
+
+Source:
+[results/cifake_mixed_chained/](results/cifake_mixed_chained/) — headline,
+overall summary, per-trial metrics, and chain-pattern and
+transform-inclusion breakdowns.
+
+> **The obvious question is still unanswered.** The mixed model has **not
+> been evaluated on SID_Set**, under single transforms or chained damage. We
+> do not know what its SID accuracy is, or whether it gave up any of the
+> 99.78% the SID-only model reached. Adding a second dataset to training
+> fixed performance on that dataset — which is close to tautological.
+> Whether it costs anything on the first is untested, and a judge should
+> read every CIFAKE number above with that gap in mind. This is the most
+> valuable outstanding run.
 
 ### Clean validation — Experiments A and B
 
