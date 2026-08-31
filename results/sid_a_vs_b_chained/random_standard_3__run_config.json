@@ -1,0 +1,105 @@
+{
+  "evaluation_title": "Random standard-3 robustness evaluation — SID A — EfficientNet clean training vs SID B — EfficientNet robustness training",
+  "evaluation_type": "seeded_per_image_random_chain",
+  "dataset_id": "SID_SET",
+  "data_root": "/content/sid_runtime",
+  "manifest_path": "/content/sid_manifest_colab.csv",
+  "split": "val",
+  "threshold": 0.5,
+  "batch_size": 64,
+  "num_workers": 2,
+  "device": "cuda",
+  "random_policy": "random_standard_3",
+  "chain_length": 3,
+  "distinct_transform_types_per_chain": true,
+  "random_order": true,
+  "num_models": 2,
+  "trial_seeds": [
+    42,
+    43,
+    44,
+    45,
+    46
+  ],
+  "seed_identity": "policy + dataset_id + image_path + trial_seed",
+  "parameter_grid": {
+    "jpeg": [
+      90,
+      70,
+      50,
+      30
+    ],
+    "blur": [
+      0.5,
+      1.0,
+      2.0
+    ],
+    "resize": [
+      0.5,
+      0.25
+    ],
+    "noise": [
+      0.02,
+      0.05,
+      0.1
+    ],
+    "colour": [
+      -0.2,
+      0.2
+    ],
+    "crop": [
+      0.8
+    ]
+  },
+  "label_convention": {
+    "0": "real",
+    "1": "AI-generated"
+  },
+  "models": [
+    {
+      "model_id": "sid_a_clean",
+      "model_title": "SID A — EfficientNet clean training",
+      "architecture_override": "efficientnet_b0",
+      "path": "/content/experiment_sid_a_clean_best.pt",
+      "sha256": "fa2f40fd4c4e35cc577ce44c59c82467a942a920cd2a3f4362140968689efad3"
+    },
+    {
+      "model_id": "sid_b_robust",
+      "model_title": "SID B — EfficientNet robustness training",
+      "architecture_override": "efficientnet_b0",
+      "path": "/content/experiment_sid_b_robust_best.pt",
+      "sha256": "918083148a04149dd2209ae21810aa4279583e57f687b4b63d9300a5aae64d55"
+    }
+  ],
+  "reported_metrics": [
+    "num_samples",
+    "threshold",
+    "true_negatives",
+    "false_positives",
+    "false_negatives",
+    "true_positives",
+    "accuracy",
+    "balanced_accuracy",
+    "precision",
+    "recall",
+    "f1",
+    "auroc",
+    "auprc",
+    "false_positive_rate",
+    "false_negative_rate",
+    "brier_score"
+  ],
+  "output_files": {
+    "predictions": "random_standard_3__sid_a_clean_vs_sid_b_robust__per_image_predictions.csv",
+    "assignments": "random_standard_3__per_image_chain_assignments.csv",
+    "clean_predictions": "random_standard_3__sid_a_clean_vs_sid_b_robust__clean_predictions.csv",
+    "trial_metrics": "random_standard_3__sid_a_clean_vs_sid_b_robust__trial_metrics.csv",
+    "overall": "random_standard_3__sid_a_clean_vs_sid_b_robust__overall_summary.csv",
+    "headline": "random_standard_3__sid_a_clean_vs_sid_b_robust__headline.csv",
+    "patterns": "random_standard_3__chain_pattern_breakdown.csv",
+    "inclusion": "random_standard_3__transform_inclusion_breakdown.csv",
+    "errors": "random_standard_3__false_positives_and_false_negatives.csv",
+    "config": "random_standard_3__run_config.json",
+    "sid_a_clean_vs_sid_b_robust": "random_standard_3__sid_a_clean_vs_sid_b_robust.csv"
+  }
+}

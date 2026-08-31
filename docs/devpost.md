@@ -103,17 +103,27 @@ for a later cross-generator comparison rather than discarded.
 own clean accuracy** (85.23% against 97.35%), fails again under colour +0.2
 (92.14%), and is the slowest of the three.
 
-**The SID clean baseline: single transforms are too easy.** A clean-trained
-SID model (`experiment_sid_a_clean_best.pt`) now exists and has been
-compared against the robustness-trained one. Under *single* transforms the
-two barely separate — SID-A is 99.86% clean and worst-case 96.35% at JPEG
-30, while SID-B stays flat above 99.7%. Under *randomly chained* damage the
-gap opens: SID-A falls to **83.00%** mean accuracy against SID-B's
-**99.08%**, pooled AUROC 0.9873 against 0.9998. On high-resolution images
-one transform is not enough to distinguish the two; augmentation earns its
-keep once damage stacks, which is how real redistribution works. (These four
-figures come from a teammate's evaluation summary rather than a committed
-CSV, and are pending file verification.)
+**The SID A→B comparison: augmentation buys noise resistance, and shows up
+under chained damage.** A clean-trained SID baseline
+(`experiment_sid_a_clean_best.pt`) has been evaluated against the
+robustness-trained model on 5,099 SID validation images per condition.
+
+Under *single* transforms the two are within ±1pp on 13 of 16 conditions.
+The entire gap sits in three: **noise σ0.10 (56.85% vs 99.43%)**, noise
+σ0.05 (79.15% vs 99.63%) and JPEG 30 (96.35% vs 99.75%). At σ0.10 the
+clean-trained model's recall falls to 12.11% — it misses seven of every
+eight AI images — though its AUROC is still 0.9972, so the ranking survives
+and only the decision boundary has moved.
+
+Under *randomly chained* damage (3 transforms per image, 5 trials, 25,495
+pooled predictions) the separation is unambiguous: **82.997% against
+99.078%** pooled accuracy, false-negative rate **34.60% against 1.72%**,
+clean-correct retention **83.04% against 99.14%**, pooled AUROC 0.9873
+against 0.9998. Trial standard deviation is 0.31pp and 0.07pp, so the
+16-point gap is far outside run-to-run noise.
+
+Single transforms understate what augmentation is worth; stacked damage —
+which is how real redistribution works — shows it.
 
 ## The finding that matters most: cross-domain collapse
 
@@ -145,9 +155,34 @@ the SID results predicts this, and nothing in our CIFAKE robustness work
 does either. For this challenge that is the consequential finding: a
 deployed detector meets generators absent from its training set, and our
 evidence says robustness augmentation buys resilience *within* a
-distribution, not across distributions. A mixed SID+CIFAKE model is training
-now as a response, but it has **not been evaluated on SID**, so whether it
-recovers cross-domain accuracy — and what that costs on SID — is unknown.
+distribution, not across distributions.
+
+**It is not an architecture problem.** We ran the same CIFAKE evaluation on
+**ConvNeXt-Tiny** — a different backbone family, 27.8M parameters against
+EfficientNet's 4.0M, and the model that scored best of all three on SID
+(99.80% clean). It collapses identically: **49.38%** clean CIFAKE accuracy,
+**0.13%** recall on AI images (10 of 7,463), never above **0.46%** recall
+under any of the 16 conditions, and zero AI detections under noise 0.02,
+0.05 and 0.10. Its accuracy never leaves a 0.10-point band around the 49.31%
+all-real floor — tighter to the floor than EfficientNet-B0.
+
+Two architectures with different inductive biases, trained on the same data,
+fail in the same direction and to the same degree. **That points at the
+training distribution rather than model capacity as the cause.** Scaling the
+backbone is not a route out; changing the training data is.
+
+**Mixed training closes the gap on CIFAKE.** Training on SID and CIFAKE
+together recovers almost all of the loss on CIFAKE: clean accuracy 49.41% →
+**97.19%**, mean damaged accuracy 49.53% → **94.36%**, AUROC from a
+0.50–0.65 band to **0.958–0.996**, recall on AI images 0.21% → 98.08%. Its
+worst condition is blur σ2.0 at 87.75%.
+
+**But the obvious question is unanswered:** the mixed model has **not been
+evaluated on SID_Set**. We do not know its SID accuracy, whether it gave up
+any of the 99.78% the SID-only model reached, or how it behaves under
+chained damage. Adding a dataset to training fixed performance on that
+dataset, which is nearly tautological; whether it costs anything on the
+first is untested.
 
 ## A negative result: consistency training did not help
 
@@ -256,44 +291,47 @@ stripped) before training, and SHA-256 de-duplicated.
 We would rather state these than have a judge find them.
 
 1. **Nothing we trained generalizes across generators.** Our SID models
-   score at chance on CIFAKE — 51.18% and 49.41% against a 49.31% all-real
-   floor, AUROC as low as 0.5015, zero AI images detected under noise.
-   Robustness training does not help and no threshold rescues it (best ~60%).
-   This is the most serious limitation in the project. The WildFake benchmark
-   is still unrun, so for a third generator we have **no evidence at all**.
-2. **The augmentation effect is demonstrated on CIFAKE.** The A→B flip result
-   comes from CIFAKE alone: 32×32 images, one generator (SD 1.4), one
-   validation split, one seed. The SID clean baseline points the same way but
-   only under chained damage (83.00% vs 99.08%); under single transforms the
-   two SID models are nearly indistinguishable, and those figures are pending
-   file verification.
-3. **Consistency training produced no measurable improvement** (above).
-4. **The robustness gain costs clean-set precision** — false-positive rate rises
+   score at chance on CIFAKE — 51.18%, 49.41% and 49.38% against a 49.31%
+   all-real floor, AUROC as low as 0.5015, zero AI images detected under
+   noise. Neither robustness training nor a change of architecture
+   (EfficientNet-B0 → ConvNeXt-Tiny) helps, and no threshold rescues it
+   (best ~60%). This is the most serious limitation in the project. The
+   WildFake benchmark is still unrun, so for a third generator we have **no
+   evidence at all**.
+2. **The augmentation effect is broad on CIFAKE but narrow on SID.** The A→B
+   flip result comes from CIFAKE alone: 32×32 images, one generator (SD 1.4),
+   one validation split, one seed. On SID the two models are within ±1pp on
+   13 of 16 single transforms — the whole gap is additive noise — and clear
+   separation only appears under chained damage (82.997% vs 99.078%).
+3. **The mixed SID+CIFAKE model has not been evaluated on SID.** It fixes
+   CIFAKE (97.19% clean), but its cost on SID performance is untested, so we
+   cannot present it as a solution.
+4. **Consistency training produced no measurable improvement** (above).
+5. **The robustness gain costs clean-set precision** — false-positive rate rises
    from 1.97% to 2.69%.
-5. **40 images are misclassified by the augmented model under all 16
+6. **40 images are misclassified by the augmented model under all 16
    conditions.** No amount of augmentation moves them, which suggests label noise
    or intrinsic ambiguity in CIFAKE rather than a robustness failure. We did not
    open them to check.
-6. **No per-source or per-generator error breakdown was possible.** The `source`
+7. **No per-source or per-generator error breakdown was possible.** The `source`
    column in our prediction logs is null in 100% of rows, and `dataset` and
    `generator` are constant, so we cannot say *which kinds* of image fail.
-7. **Single seed, single split.** Small differences between arms cannot be called
+8. **Single seed, single split.** Small differences between arms cannot be called
    significant.
-8. Model outputs are strongly bimodal — only 7.7–8.3% of predictions fall between
+9. Model outputs are strongly bimodal — only 7.7–8.3% of predictions fall between
    0.20 and 0.80. This is expected from a single-logit network trained to
    near-zero loss, and is only a problem for the baseline, whose confidence is
    also poorly calibrated.
-9. **The tampered holdout has never been analysed.** Tampered SID_Set images are
+10. **The tampered holdout has never been analysed.** Tampered SID_Set images are
    correctly routed to a dedicated `bonus` split and kept out of binary training
    and evaluation, but no evaluation entry point currently exposes that split
    (`--split` accepts only `val` or `test`), and labels are emitted as float32
    for `BCEWithLogitsLoss`, so a 3-class row would need explicit handling. The
    quarantine works; the analysis it enables is future work.
 
-**With more time, in priority order:** finish and evaluate the mixed
-SID+CIFAKE model on *both* datasets, since cross-generator collapse is now
-the binding problem rather than transform robustness; run the held-out
-WildFake
+**With more time, in priority order:** evaluate the mixed SID+CIFAKE model
+on SID, which is the one number that decides whether mixed training is a fix
+or a trade; run the held-out WildFake
 benchmark for a real cross-generator number, which is our largest unknown;
 inspect the 40 persistent failures for label noise; tune the decision threshold
 to claw back the false-positive rate; and re-run the A/B/C ablation across

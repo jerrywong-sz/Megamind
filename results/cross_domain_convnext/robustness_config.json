@@ -1,0 +1,124 @@
+{
+  "mode": "robustness",
+  "evaluation_title": "Single-transform robustness evaluation — SID B - EfficientNet robustness SID training vs SID ConvNeXt - robustness SID training",
+  "data_root": "/content/cifake_data",
+  "manifest_path": "/content/evaluation_files/cifake_manifest.csv",
+  "split": "val",
+  "threshold": 0.5,
+  "batch_size": 32,
+  "num_workers": 2,
+  "device": "cuda",
+  "seed": 42,
+  "preprocessing": "condition before src.data.get_eval_transform",
+  "num_models": 2,
+  "num_conditions": 16,
+  "num_images_per_model_condition": 14724,
+  "conditions": [
+    {
+      "transform": "clean",
+      "severity": null
+    },
+    {
+      "transform": "jpeg",
+      "severity": 90
+    },
+    {
+      "transform": "jpeg",
+      "severity": 70
+    },
+    {
+      "transform": "jpeg",
+      "severity": 50
+    },
+    {
+      "transform": "jpeg",
+      "severity": 30
+    },
+    {
+      "transform": "blur",
+      "severity": 0.5
+    },
+    {
+      "transform": "blur",
+      "severity": 1.0
+    },
+    {
+      "transform": "blur",
+      "severity": 2.0
+    },
+    {
+      "transform": "resize",
+      "severity": 0.5
+    },
+    {
+      "transform": "resize",
+      "severity": 0.25
+    },
+    {
+      "transform": "noise",
+      "severity": 0.02
+    },
+    {
+      "transform": "noise",
+      "severity": 0.05
+    },
+    {
+      "transform": "noise",
+      "severity": 0.1
+    },
+    {
+      "transform": "colour",
+      "severity": -0.2
+    },
+    {
+      "transform": "colour",
+      "severity": 0.2
+    },
+    {
+      "transform": "crop",
+      "severity": 0.8
+    }
+  ],
+  "models": [
+    {
+      "model_id": "sid_b_robust",
+      "model_title": "SID B - EfficientNet robustness SID training",
+      "checkpoint_path": "/content/evaluation_files/experiment_sid_b_robust_best.pt",
+      "architecture_override": "efficientnet_b0",
+      "path": "/content/evaluation_files/experiment_sid_b_robust_best.pt",
+      "sha256": "918083148a04149dd2209ae21810aa4279583e57f687b4b63d9300a5aae64d55"
+    },
+    {
+      "model_id": "sid_convnext_robust",
+      "model_title": "SID ConvNeXt - robustness SID training",
+      "checkpoint_path": "/content/experiment_sid_convnext_robust_best.pt",
+      "architecture_override": "convnext_tiny",
+      "path": "/content/experiment_sid_convnext_robust_best.pt",
+      "sha256": "758444e568d117bba2345df8ce705ea0cce77da31fe58a9a266732eb97764bef"
+    }
+  ],
+  "checkpoints": [
+    {
+      "model_id": "sid_b_robust",
+      "model_title": "SID B - EfficientNet robustness SID training",
+      "checkpoint_path": "/content/evaluation_files/experiment_sid_b_robust_best.pt",
+      "architecture_override": "efficientnet_b0",
+      "path": "/content/evaluation_files/experiment_sid_b_robust_best.pt",
+      "sha256": "918083148a04149dd2209ae21810aa4279583e57f687b4b63d9300a5aae64d55"
+    },
+    {
+      "model_id": "sid_convnext_robust",
+      "model_title": "SID ConvNeXt - robustness SID training",
+      "checkpoint_path": "/content/experiment_sid_convnext_robust_best.pt",
+      "architecture_override": "convnext_tiny",
+      "path": "/content/experiment_sid_convnext_robust_best.pt",
+      "sha256": "758444e568d117bba2345df8ce705ea0cce77da31fe58a9a266732eb97764bef"
+    }
+  ],
+  "output_files": {
+    "predictions": "robustness_predictions.csv",
+    "metrics": "robustness_metrics.csv",
+    "comparison": "robustness_comparison.csv",
+    "config": "robustness_config.json"
+  }
+}

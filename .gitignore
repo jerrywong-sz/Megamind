@@ -224,11 +224,17 @@ checkpoints/
 # Ignore downloaded hackathon data
 images/
 
-# Per-image prediction dumps from evaluate.py (~89MB each).
-# The per-condition metrics/comparison CSVs ARE committed -- only these
-# row-per-image files are excluded, on any --output-dir under results/.
+# Per-image prediction dumps from the evaluation scripts (45-190MB each).
+# The per-condition metrics/comparison/summary CSVs ARE committed -- only
+# these row-per-image files are excluded, on any --output-dir under results/.
+# Suffix globs are needed because the chained evaluator prefixes its output
+# filenames (e.g. random_standard_3__..._per_image_predictions.csv).
 results/**/robustness_predictions.csv
 results/**/clean_predictions.csv
+results/**/*clean_predictions.csv
+results/**/*per_image_predictions.csv
+results/**/*per_image_chain_assignments.csv
+results/**/*false_positives_and_false_negatives.csv
 results/robustness_predictions.csv
 results/clean_predictions.csv
 predictions.json

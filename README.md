@@ -494,7 +494,9 @@ produces the checkpoint we're submitting.
 > transformation-flip result — still the clearest demonstration of what
 > augmentation buys. Read both alongside the **cross-domain** result: SID
 > models score near chance on CIFAKE, so high in-dataset accuracy does not
-> transfer. The WildFake benchmark remains held out and unrun.
+> transfer — though a mixed SID+CIFAKE model recovers most of it on CIFAKE,
+> at an untested cost on SID. The WildFake benchmark remains held out and
+> unrun.
 
 ### SID_Set results — architecture comparison
 
@@ -586,31 +588,94 @@ they do not: 92.14% under colour +0.2 and **85.23% under crop 0.8**, a
 three at 4.34 ms per image. Full reasoning is in
 [results/sid/architecture_selection_notes.txt](results/sid/architecture_selection_notes.txt).
 
-#### The SID clean baseline: single transforms are too easy
+#### The SID A→B comparison: augmentation buys noise resistance
 
-A clean-trained SID baseline now exists —
-`experiment_sid_a_clean_best.pt`, SHA-256 `fa2f40fd…` — and has been
-evaluated against the robustness-trained model. The comparison splits by
-damage type.
+A clean-trained SID baseline exists — `experiment_sid_a_clean_best.pt`,
+SHA-256 `fa2f40fd…` — and has been evaluated against the robustness-trained
+model on the SID validation split, 5,099 images per condition, threshold
+0.5, seed 42.
 
-**Under single transforms the two are hard to tell apart.** SID-A reaches
-99.86% clean and bottoms out at 96.35% (JPEG 30); SID-B stays flat above
-99.7% throughout. A 3.5-point worst-case gap is real but modest.
+| Condition | SID-A (clean-trained) | SID-B (robustness-trained) | Difference |
+|---|---:|---:|---:|
+| clean | 99.86% | 99.78% | -0.08pp |
+| jpeg 90 | 99.88% | 99.78% | -0.10pp |
+| jpeg 70 | 99.80% | 99.75% | -0.06pp |
+| jpeg 50 | 98.73% | 99.75% | +1.02pp |
+| jpeg 30 | 96.35% | 99.75% | +3.39pp |
+| blur 0.5 | 99.90% | 99.80% | -0.10pp |
+| blur 1.0 | 99.90% | 99.82% | -0.08pp |
+| blur 2.0 | 99.69% | 99.76% | +0.08pp |
+| resize 0.5 | 99.88% | 99.82% | -0.06pp |
+| resize 0.25 | 99.71% | 99.76% | +0.06pp |
+| noise 0.02 | 99.04% | 99.84% | +0.80pp |
+| noise 0.05 | 79.15% | 99.63% | +20.47pp |
+| noise 0.10 | 56.85% | 99.43% | +42.58pp |
+| colour -0.2 | 99.65% | 99.71% | +0.06pp |
+| colour +0.2 | 99.29% | 99.59% | +0.29pp |
+| crop 0.8 | 99.67% | 99.78% | +0.12pp |
 
-**Under randomly chained damage the gap opens up.** SID-A falls to 83.00%
-mean accuracy while SID-B holds 99.08% — pooled AUROC 0.9873 against
-0.9998.
+Source:
+[results/sid_a_vs_b/robustness_metrics.csv](results/sid_a_vs_b/robustness_metrics.csv);
+aggregates in
+[results/sid_a_vs_b/sid_a_vs_sid_b_basic_headline.csv](results/sid_a_vs_b/sid_a_vs_sid_b_basic_headline.csv).
 
-The reading: on high-resolution images a single transform is not enough to
-separate a clean-trained model from an augmented one. Augmentation earns
-its keep once damage *stacks*, which is how redistribution actually works —
-an image gets resized, re-encoded, screenshotted and re-encoded again.
+**The average hides the result.** Across all 15 damaged conditions SID-A
+averages 95.17% against SID-B's 99.73% — a gap that looks moderate. But on
+13 of the 16 conditions the two models are within ±1pp of each other, and
+the entire difference comes from three conditions:
 
-> **Pending file verification.** The chained-damage figures and SID-A's
-> single-transform numbers come from a teammate's evaluation summary, not
-> from a CSV committed here. `results/sid/` currently holds only the
-> robustness-trained models. Treat these four numbers as provisional until
-> the source files land.
+- **noise σ0.10 — 56.85% vs 99.43%**, a 42.6pp gap. SID-A's recall falls to
+  **12.11%**: it misses seven of every eight AI images.
+- **noise σ0.05 — 79.15% vs 99.63%**, 20.5pp.
+- **JPEG 30 — 96.35% vs 99.75%**, 3.4pp.
+
+Everywhere else — blur, resize, colour, crop, mild JPEG — the clean-trained
+model is fine, and on six conditions it is fractionally *ahead*. Augmentation
+is not buying broad robustness on SID. It is buying resistance to additive
+noise, which is the one degradation that clean SID training does not
+incidentally cover.
+
+One further detail worth stating: at noise σ0.10 SID-A's AUROC is still
+**0.9972**. Its *ranking* is nearly intact — the scores are all there, the
+decision boundary has simply moved. That is a calibration failure, not a
+representation failure, and unlike the cross-domain collapse below it could
+in principle be fixed by moving the threshold.
+
+#### Chained damage: where the gap is unambiguous
+
+Under randomly chained damage — 3 transforms per image, 5 trials over the
+same 5,099 images, 25,495 pooled predictions — the two models separate
+cleanly:
+
+| | SID-A (clean-trained) | SID-B (robustness-trained) |
+|---|---:|---:|
+| Clean accuracy | 99.86% | 99.78% |
+| Pooled chained accuracy | **82.997%** | **99.078%** |
+| Trial std. dev. | 0.31pp | 0.07pp |
+| Pooled AUROC | 0.9873 | 0.9998 |
+| False-negative rate | **34.60%** | **1.72%** |
+| Clean-correct retention | 83.04% | 99.14% |
+
+"Clean-correct retention" is the share of images the model got right clean
+that it still gets right after damage — the chained analogue of the
+transformation-flip metric used on CIFAKE. SID-A loses **17%** of its
+correct answers; SID-B loses 0.9%.
+
+Both models fail asymmetrically, calling AI images real: SID-A's
+false-negative rate is 34.60% against a false-positive rate of 0.04%. Under
+stacked damage the clean-trained model misses roughly a third of all AI
+images.
+
+Across five trials the standard deviation is 0.31pp (A) and 0.07pp (B), so
+the 16-point gap is far outside trial-to-trial variation. Source:
+[results/sid_a_vs_b_chained/](results/sid_a_vs_b_chained/) — headline,
+overall summary, per-trial metrics, and chain-pattern and
+transform-inclusion breakdowns.
+
+**Single transforms understate what augmentation is worth; chained damage
+shows it.** Real redistribution stacks damage — an image is resized, re-
+encoded, screenshotted, re-encoded again — and that is the regime where the
+augmented model holds and the clean one does not.
 
 ### Cross-domain generalization: what SID accuracy does not tell you
 
@@ -659,10 +724,82 @@ the paired comparison is in
 The 167MB per-image prediction dump is deliberately not committed (see
 `.gitignore`).
 
-**Scope.** This evaluation covers the two EfficientNet-B0 SID models only.
-A mixed SID+CIFAKE model is being trained as a response, but it has **not
-been evaluated on SID**, so whether it recovers cross-domain accuracy — and
-what it costs in SID performance — is unknown.
+#### A second architecture fails identically
+
+The collapse is not an artifact of EfficientNet-B0. We ran the same CIFAKE
+evaluation on **ConvNeXt-Tiny** (`sid_convnext_robust`, SHA-256
+`758444e5…`) — a different backbone family, 27.8M parameters against
+EfficientNet's 4.0M, and the model that scored *best of all three* on SID at
+99.80% clean. Same 14,724 CIFAKE validation images, same 16 conditions,
+threshold 0.5, seed 42.
+
+| | EfficientNet-B0 | ConvNeXt-Tiny |
+|---|---:|---:|
+| SID clean accuracy (for reference) | 99.78% | 99.80% |
+| CIFAKE clean accuracy | 49.41% | **49.38%** |
+| CIFAKE clean recall on AI images | 0.21% (16 / 7,463) | **0.13% (10 / 7,463)** |
+| Best recall across all 16 conditions | 7.84% | **0.46%** |
+| Accuracy range over 16 conditions | 49.31% – 50.29% | **49.29% – 49.40%** |
+| AUROC range | 0.5015 – 0.6505 | 0.5136 – 0.6407 |
+| Conditions with zero AI detections | 2 (noise 0.05, 0.10) | **3 (noise 0.02, 0.05, 0.10)** |
+
+ConvNeXt-Tiny is, if anything, *further* gone. It never exceeds 0.46% recall
+under any condition, its accuracy never leaves a 0.10-point band around the
+49.31% all-real floor, and it detects nothing at all under three noise
+settings rather than two. Tripling the parameter count and changing backbone
+family buys nothing.
+
+**The cause is the training distribution, not model capacity.** Two
+architectures with different inductive biases, trained on the same data,
+fail in the same direction, to the same degree, with the same asymmetry —
+both predict "real" almost universally. That rules out architecture as the
+explanation and points at what the models were trained on. Scaling up or
+swapping backbones is not a route out of this; changing the training data
+is, which is what the mixed model below tests.
+
+Source:
+[results/cross_domain_convnext/robustness_metrics.csv](results/cross_domain_convnext/robustness_metrics.csv).
+DINOv2 ViT-S/14 has not been evaluated cross-domain.
+
+#### Mixed training closes the gap on CIFAKE
+
+Training on SID **and** CIFAKE together recovers almost all of the loss. The
+mixed model (`mixed_sid_cifake_b`, SHA-256 `9159a9d4…`) was evaluated on the
+same CIFAKE validation split against the SID-only model it replaces:
+
+| Condition | SID-only B | Mixed SID+CIFAKE B | Difference |
+|---|---:|---:|---:|
+| clean | 49.41% | 97.19% | +47.78pp |
+| jpeg 90 | 49.40% | 97.11% | +47.70pp |
+| jpeg 70 | 49.40% | 97.15% | +47.75pp |
+| jpeg 50 | 49.36% | 95.81% | +46.45pp |
+| jpeg 30 | 49.39% | 95.12% | +45.73pp |
+| blur 0.5 | 49.37% | 96.00% | +46.63pp |
+| blur 1.0 | 49.93% | 93.83% | +43.89pp |
+| blur 2.0 | 50.04% | 87.75% | +37.71pp |
+| resize 0.5 | 49.65% | 94.12% | +44.46pp |
+| resize 0.25 | 50.29% | 88.28% | +38.00pp |
+| noise 0.02 | 49.33% | 96.75% | +47.42pp |
+| noise 0.05 | 49.31% | 95.63% | +46.31pp |
+| noise 0.10 | 49.31% | 92.85% | +43.53pp |
+| colour -0.2 | 49.33% | 95.68% | +46.35pp |
+| colour +0.2 | 49.50% | 94.43% | +44.93pp |
+| crop 0.8 | 49.37% | 94.88% | +45.51pp |
+
+Clean accuracy goes from 49.41% to **97.19%**, mean damaged accuracy from
+49.53% to **94.36%**, and AUROC from a 0.50–0.65 band to **0.958–0.996**.
+Recall on AI images goes from 0.21% to 98.08%. The worst condition is blur
+σ2.0 at 87.75%, still 38pp above the model it replaces. Source:
+[results/cifake_mixed_model/robustness_metrics.csv](results/cifake_mixed_model/robustness_metrics.csv).
+
+> **The obvious question is unanswered.** The mixed model has **not been
+> evaluated on SID_Set**. We do not know what its SID accuracy is, whether
+> it gave up any of the 99.78% the SID-only model reached, or how it behaves
+> under chained damage. Adding a second dataset to training fixed
+> performance on that dataset — which is close to tautological. Whether it
+> costs anything on the first is untested, and a judge should read the
+> CIFAKE numbers above with that gap in mind. This is now the most valuable
+> outstanding run.
 
 ### Clean validation — Experiments A and B
 
@@ -858,13 +995,15 @@ all. We have no reason to expect a different outcome on a third generator,
 and the WildFake cross-generator benchmark is still unrun, so for generators
 outside our two datasets we have **no evidence at all**.
 
-**The augmentation effect itself is demonstrated on CIFAKE.** The A→B
-transformation-flip result (38,504 → 5,611) comes from CIFAKE: 32×32 images,
-Stable Diffusion 1.4, one validation split of 14,724 images, one seed. A SID
-clean baseline does now exist, and it supports the same direction — but only
-under *chained* damage (83.00% against 99.08%); under single transforms the
-two SID models are nearly indistinguishable. Those SID baseline figures are
-still pending file verification (see the SID section above).
+**The augmentation effect is demonstrated on CIFAKE, and narrowly on SID.**
+The A→B transformation-flip result (38,504 → 5,611) comes from CIFAKE: 32×32
+images, Stable Diffusion 1.4, one validation split of 14,724 images, one
+seed. The SID A→B comparison supports the same direction but more narrowly
+than the average suggests: under single transforms the two models are within
+±1pp on 13 of 16 conditions, and the whole gap sits in additive noise
+(56.85% vs 99.43% at σ0.10). Under chained damage the separation is
+unambiguous (82.997% vs 99.078%). So augmentation's value on SID is real but
+concentrated — it is not broad robustness across every degradation type.
 
 **Consistency training (Experiment C) produced no measurable improvement.**
 Across the 16 single-transform conditions, C beat B in 9 and lost in 7,

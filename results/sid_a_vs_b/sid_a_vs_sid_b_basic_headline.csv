@@ -1,0 +1,3 @@
+model_id,model_title,mean_transformed_accuracy,worst_transformed_accuracy,mean_transformed_auroc,mean_false_positive_rate,mean_false_negative_rate,clean_accuracy,clean_auroc,robustness_accuracy_drop
+sid_a_clean,SID A — EfficientNet clean training,0.9516637249133818,0.5685428515395176,0.999723885523299,0.0007704160246532868,0.09766946331069379,0.998627181800353,0.9999803009885826,0.04696345688697123
+sid_b_robust,SID B — EfficientNet robustness training,0.9973197358959273,0.994312610315748,0.9998923941501323,0.0026450950179763267,0.00271673991210542,0.9978427142576975,0.9999333619379396,0.0005229783617702877

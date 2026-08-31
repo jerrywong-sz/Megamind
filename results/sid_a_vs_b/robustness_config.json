@@ -1,0 +1,124 @@
+{
+  "mode": "robustness",
+  "evaluation_title": "Single-transform robustness evaluation — SID A — EfficientNet clean training vs SID B — EfficientNet robustness training",
+  "data_root": "/kaggle/input/datasets/keyi11/clean-sid-set",
+  "manifest_path": "/kaggle/working/sid_manifest_kaggle.csv",
+  "split": "val",
+  "threshold": 0.5,
+  "batch_size": 64,
+  "num_workers": 2,
+  "device": "cuda",
+  "seed": 42,
+  "preprocessing": "condition before src.data.get_eval_transform",
+  "num_models": 2,
+  "num_conditions": 16,
+  "num_images_per_model_condition": 5099,
+  "conditions": [
+    {
+      "transform": "clean",
+      "severity": null
+    },
+    {
+      "transform": "jpeg",
+      "severity": 90
+    },
+    {
+      "transform": "jpeg",
+      "severity": 70
+    },
+    {
+      "transform": "jpeg",
+      "severity": 50
+    },
+    {
+      "transform": "jpeg",
+      "severity": 30
+    },
+    {
+      "transform": "blur",
+      "severity": 0.5
+    },
+    {
+      "transform": "blur",
+      "severity": 1.0
+    },
+    {
+      "transform": "blur",
+      "severity": 2.0
+    },
+    {
+      "transform": "resize",
+      "severity": 0.5
+    },
+    {
+      "transform": "resize",
+      "severity": 0.25
+    },
+    {
+      "transform": "noise",
+      "severity": 0.02
+    },
+    {
+      "transform": "noise",
+      "severity": 0.05
+    },
+    {
+      "transform": "noise",
+      "severity": 0.1
+    },
+    {
+      "transform": "colour",
+      "severity": -0.2
+    },
+    {
+      "transform": "colour",
+      "severity": 0.2
+    },
+    {
+      "transform": "crop",
+      "severity": 0.8
+    }
+  ],
+  "models": [
+    {
+      "model_id": "sid_a_clean",
+      "model_title": "SID A — EfficientNet clean training",
+      "checkpoint_path": "/kaggle/input/datasets/ngweijien/megamind-evaluation-files/experiment_sid_a_clean_best.pt",
+      "architecture_override": "efficientnet_b0",
+      "path": "/kaggle/input/datasets/ngweijien/megamind-evaluation-files/experiment_sid_a_clean_best.pt",
+      "sha256": "fa2f40fd4c4e35cc577ce44c59c82467a942a920cd2a3f4362140968689efad3"
+    },
+    {
+      "model_id": "sid_b_robust",
+      "model_title": "SID B — EfficientNet robustness training",
+      "checkpoint_path": "/kaggle/input/datasets/ngweijien/megamind-evaluation-files/experiment_sid_b_robust_best.pt",
+      "architecture_override": "efficientnet_b0",
+      "path": "/kaggle/input/datasets/ngweijien/megamind-evaluation-files/experiment_sid_b_robust_best.pt",
+      "sha256": "918083148a04149dd2209ae21810aa4279583e57f687b4b63d9300a5aae64d55"
+    }
+  ],
+  "checkpoints": [
+    {
+      "model_id": "sid_a_clean",
+      "model_title": "SID A — EfficientNet clean training",
+      "checkpoint_path": "/kaggle/input/datasets/ngweijien/megamind-evaluation-files/experiment_sid_a_clean_best.pt",
+      "architecture_override": "efficientnet_b0",
+      "path": "/kaggle/input/datasets/ngweijien/megamind-evaluation-files/experiment_sid_a_clean_best.pt",
+      "sha256": "fa2f40fd4c4e35cc577ce44c59c82467a942a920cd2a3f4362140968689efad3"
+    },
+    {
+      "model_id": "sid_b_robust",
+      "model_title": "SID B — EfficientNet robustness training",
+      "checkpoint_path": "/kaggle/input/datasets/ngweijien/megamind-evaluation-files/experiment_sid_b_robust_best.pt",
+      "architecture_override": "efficientnet_b0",
+      "path": "/kaggle/input/datasets/ngweijien/megamind-evaluation-files/experiment_sid_b_robust_best.pt",
+      "sha256": "918083148a04149dd2209ae21810aa4279583e57f687b4b63d9300a5aae64d55"
+    }
+  ],
+  "output_files": {
+    "predictions": "robustness_predictions.csv",
+    "metrics": "robustness_metrics.csv",
+    "comparison": "robustness_comparison.csv",
+    "config": "robustness_config.json"
+  }
+}
