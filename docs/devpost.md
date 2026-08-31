@@ -2,9 +2,16 @@
 
 **Demo video:** TODO — paste YouTube link here.
 
-A binary detector for AI-generated images, built and measured around a single
-question: does it still work after the image has been through a real upload
-pipeline?
+A binary detector for AI-generated images, built and measured around two
+questions: does it still work after the image has been through a real upload
+pipeline, and does it still work on a generator it has never seen?
+
+The first question has a good answer — robustness augmentation removes 85.4%
+of the errors that transforms introduce. The second nearly did not. Our
+best detector, 99.8% accurate on its own dataset, turned out to score **at
+chance** on images from a different generator. We traced that failure to its
+cause and fixed it, and the fix cost 0.47 accuracy points. That arc is
+[the most important thing in this submission](#the-finding-that-matters-most-cross-domain-collapse-and-the-fix).
 
 ---
 
@@ -125,7 +132,7 @@ against 0.9998. Trial standard deviation is 0.31pp and 0.07pp, so the
 Single transforms understate what augmentation is worth; stacked damage —
 which is how real redistribution works — shows it.
 
-## The finding that matters most: cross-domain collapse
+## The finding that matters most: cross-domain collapse, and the fix
 
 **Our SID models score at chance on CIFAKE.** We took both EfficientNet-B0
 SID models and ran them over the CIFAKE validation split — 14,724 images
@@ -194,12 +201,39 @@ measure consistency, not correctness. The mixed model loses 12.86 points
 from clean to chained precisely because it is making real decisions that
 damage can disrupt.
 
-**But the obvious question is unanswered:** the mixed model has **not been
-evaluated on SID_Set**, under single transforms or chained damage. We do not
-know its SID accuracy, or whether it gave up any of the 99.78% the SID-only
-model reached. Adding a dataset to training fixed performance on that
-dataset, which is nearly tautological; whether it costs anything on the
-first is untested.
+**And it costs almost nothing on SID.** The mixed model has now been
+evaluated on the SID validation split as well — 5,099 images per condition,
+the same 16 conditions. It gives up **0.47pp** on clean images (99.78% →
+99.31%) and **0.92pp** at its worst condition (99.43% → 98.51% at noise
+σ0.10). No condition costs more than 0.92pp, and AUROC is essentially
+unchanged: 0.9998 against 0.9999.
+
+### What the three results say together
+
+| | SID | CIFAKE |
+|---|---:|---:|
+| SID-only B (EfficientNet-B0) | 99.78% | 49.41% |
+| SID-only ConvNeXt-Tiny | 99.80% | 49.38% |
+| **Mixed SID+CIFAKE B** | **99.31%** | **97.19%** |
+
+**The failure was never about the model.** Two backbones from different
+families — 4.0M and 27.8M parameters — trained on the same data collapse to
+within 0.03pp of each other, both to a near-constant "real" prediction.
+Architecture and capacity are ruled out. What the failing models share is
+their training distribution.
+
+**Source diversity is the lever, and it is cheap.** Adding a second training
+source costs **0.47 points** on the original dataset and gains **47.78
+points** on the previously unseen one — roughly a hundred points gained for
+each one given up. The fix is not a better architecture, more parameters, or
+heavier augmentation; augmentation does nothing for this failure mode. It is
+more than one source of images in training.
+
+The honest limit: this is one direction, one seed, two datasets. We have
+shown that adding a source fixes performance on that source almost for free.
+We have **not** shown that training on two generators generalizes to a
+third. The held-out WildFake benchmark would test exactly that, and it
+remains unrun.
 
 ## A negative result: consistency training did not help
 
@@ -307,48 +341,43 @@ stripped) before training, and SHA-256 de-duplicated.
 
 We would rather state these than have a judge find them.
 
-1. **Nothing we trained generalizes across generators.** Our SID models
-   score at chance on CIFAKE — 51.18%, 49.41% and 49.38% against a 49.31%
-   all-real floor, AUROC as low as 0.5015, zero AI images detected under
-   noise. Neither robustness training nor a change of architecture
-   (EfficientNet-B0 → ConvNeXt-Tiny) helps, and no threshold rescues it
-   (best ~60%). This is the most serious limitation in the project. The
-   WildFake benchmark is still unrun, so for a third generator we have **no
-   evidence at all**.
+1. **Generalization to an *unseen* generator remains unproven.** Training on
+   a generator fixes that generator (SID-only models score 49.4% on CIFAKE;
+   the mixed model scores 97.19%). What we have not shown is that training on
+   two generators helps on a third. The held-out WildFake benchmark would
+   test this and is still unrun, so for a generator absent from training we
+   have **no positive evidence** — only the demonstrated failure mode, which
+   was severe: at chance, AUROC 0.5015, zero AI images detected under noise,
+   and no threshold recovering more than ~60%.
 2. **The augmentation effect is broad on CIFAKE but narrow on SID.** The A→B
    flip result comes from CIFAKE alone: 32×32 images, one generator (SD 1.4),
    one validation split, one seed. On SID the two models are within ±1pp on
    13 of 16 single transforms — the whole gap is additive noise — and clear
    separation only appears under chained damage (82.997% vs 99.078%).
-3. **The mixed SID+CIFAKE model has not been evaluated on SID.** It fixes
-   CIFAKE (97.19% clean), but its cost on SID performance is untested, so we
-   cannot present it as a solution.
-4. **Consistency training produced no measurable improvement** (above).
-5. **The robustness gain costs clean-set precision** — false-positive rate rises
+3. **Consistency training produced no measurable improvement** (above).
+4. **The robustness gain costs clean-set precision** — false-positive rate rises
    from 1.97% to 2.69%.
-6. **40 images are misclassified by the augmented model under all 16
+5. **40 images are misclassified by the augmented model under all 16
    conditions.** No amount of augmentation moves them, which suggests label noise
    or intrinsic ambiguity in CIFAKE rather than a robustness failure. We did not
    open them to check.
-7. **No per-source or per-generator error breakdown was possible.** The `source`
+6. **No per-source or per-generator error breakdown was possible.** The `source`
    column in our prediction logs is null in 100% of rows, and `dataset` and
    `generator` are constant, so we cannot say *which kinds* of image fail.
-8. **Single seed, single split.** Small differences between arms cannot be called
+7. **Single seed, single split.** Small differences between arms cannot be called
    significant.
-9. Model outputs are strongly bimodal — only 7.7–8.3% of predictions fall between
+8. Model outputs are strongly bimodal — only 7.7–8.3% of predictions fall between
    0.20 and 0.80. This is expected from a single-logit network trained to
    near-zero loss, and is only a problem for the baseline, whose confidence is
    also poorly calibrated.
-10. **The tampered holdout has never been analysed.** Tampered SID_Set images are
+9. **The tampered holdout has never been analysed.** Tampered SID_Set images are
    correctly routed to a dedicated `bonus` split and kept out of binary training
    and evaluation, but no evaluation entry point currently exposes that split
    (`--split` accepts only `val` or `test`), and labels are emitted as float32
    for `BCEWithLogitsLoss`, so a 3-class row would need explicit handling. The
    quarantine works; the analysis it enables is future work.
 
-**With more time, in priority order:** evaluate the mixed SID+CIFAKE model
-on SID, which is the one number that decides whether mixed training is a fix
-or a trade; run the held-out WildFake
+**With more time, in priority order:** run the held-out WildFake
 benchmark for a real cross-generator number, which is our largest unknown;
 inspect the 40 persistent failures for label noise; tune the decision threshold
 to claw back the false-positive rate; and re-run the A/B/C ablation across

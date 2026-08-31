@@ -494,9 +494,9 @@ produces the checkpoint we're submitting.
 > transformation-flip result — still the clearest demonstration of what
 > augmentation buys. Read both alongside the **cross-domain** result: SID
 > models score near chance on CIFAKE, so high in-dataset accuracy does not
-> transfer — though a mixed SID+CIFAKE model recovers most of it on CIFAKE,
-> at an untested cost on SID. The WildFake benchmark remains held out and
-> unrun.
+> transfer. Training on both sources fixes it: the mixed model reaches 97.19%
+> on CIFAKE for a 0.47pp cost on SID. The WildFake benchmark remains held out
+> and unrun, so generalization to a *third* generator is still untested.
 
 ### SID_Set results — architecture comparison
 
@@ -835,14 +835,71 @@ Source:
 overall summary, per-trial metrics, and chain-pattern and
 transform-inclusion breakdowns.
 
-> **The obvious question is still unanswered.** The mixed model has **not
-> been evaluated on SID_Set**, under single transforms or chained damage. We
-> do not know what its SID accuracy is, or whether it gave up any of the
-> 99.78% the SID-only model reached. Adding a second dataset to training
-> fixed performance on that dataset — which is close to tautological.
-> Whether it costs anything on the first is untested, and a judge should
-> read every CIFAKE number above with that gap in mind. This is the most
-> valuable outstanding run.
+#### What mixing costs on SID: about half a point
+
+The remaining question — whether adding CIFAKE damaged SID performance — has
+now been measured. Both models on the SID validation split, 5,099 images per
+condition, same 16 conditions, threshold 0.5, seed 42.
+
+| Condition | SID-only B | Mixed SID+CIFAKE B | Cost |
+|---|---:|---:|---:|
+| clean | 99.78% | 99.31% | -0.47pp |
+| jpeg 90 | 99.78% | 99.35% | -0.43pp |
+| jpeg 70 | 99.75% | 99.43% | -0.31pp |
+| jpeg 50 | 99.75% | 99.41% | -0.33pp |
+| jpeg 30 | 99.75% | 99.49% | -0.25pp |
+| blur 0.5 | 99.80% | 99.35% | -0.45pp |
+| blur 1.0 | 99.82% | 99.39% | -0.43pp |
+| blur 2.0 | 99.76% | 99.20% | -0.57pp |
+| resize 0.5 | 99.82% | 99.41% | -0.41pp |
+| resize 0.25 | 99.76% | 99.33% | -0.43pp |
+| noise 0.02 | 99.84% | 99.29% | -0.55pp |
+| noise 0.05 | 99.63% | 99.12% | -0.51pp |
+| noise 0.10 | 99.43% | 98.51% | -0.92pp |
+| colour -0.2 | 99.71% | 99.33% | -0.37pp |
+| colour +0.2 | 99.59% | 99.24% | -0.35pp |
+| crop 0.8 | 99.78% | 99.43% | -0.35pp |
+
+**The cost is 0.47pp on clean images (99.78% → 99.31%) and 0.92pp at the
+worst condition (99.43% → 98.51%, noise σ0.10).** No condition costs more
+than 0.92pp; the median cost is 0.43pp. Clean AUROC is essentially unchanged
+at 0.9998 against 0.9999, and mean AUROC across the damaged conditions is
+0.9995 against 0.9999 — the ranking quality survives intact. Source:
+[results/sid_mixed_model/robustness_metrics.csv](results/sid_mixed_model/robustness_metrics.csv).
+
+#### Synthesis: the problem is the training distribution
+
+Putting the three cross-domain results together:
+
+| | SID | CIFAKE |
+|---|---:|---:|
+| SID-only B (EfficientNet-B0) | 99.78% | 49.41% |
+| SID-only ConvNeXt-Tiny | 99.80% | 49.38% |
+| **Mixed SID+CIFAKE B** | **99.31%** | **97.19%** |
+
+Two conclusions follow, and they are the strongest results in this project.
+
+**The failure was never about the model.** Two backbones from different
+families — 4.0M and 27.8M parameters, convolutional and modernized-ConvNeXt
+designs — trained on the same data, collapse to within 0.03pp of each other
+on CIFAKE, both to a near-constant "real" prediction. Architecture and
+capacity are ruled out. What the two failing models share is their training
+distribution.
+
+**Source diversity is the lever, and it is remarkably cheap.** Adding a
+second training source costs **0.47pp** on the original dataset and gains
+**47.78pp** on the previously unseen one. That is roughly a hundred points
+gained for every point given up. The fix is not a better architecture, more
+parameters, or heavier augmentation — augmentation, as the cross-domain
+results show, does nothing for this failure mode. It is more than one source
+of images in training.
+
+The honest scope: this is one direction (SID → SID+CIFAKE), one seed, and
+two datasets. We have shown that adding a source fixes performance on that
+source at negligible cost to the first. We have **not** shown that a model
+trained on two generators generalizes to a third — the held-out WildFake
+benchmark would test exactly that, and it remains unrun. That is the natural
+next experiment and the honest limit of the claim.
 
 ### Clean validation — Experiments A and B
 
