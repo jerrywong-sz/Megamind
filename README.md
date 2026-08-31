@@ -197,6 +197,33 @@ multiple datasets' manifests into one combined CSV for
 `get_dataloaders()` — do that manually (e.g. `pandas.concat`) until
 that's added.
 
+#### Known gap: the mixed SID+CIFAKE manifest is not reproducible from this repo
+
+This matters more than the TODO above suggests, because the **mixed
+SID+CIFAKE model is the checkpoint we recommend submitting** — and the
+manifest behind it was built notebook-side, not by anything committed here.
+What we can do is record exactly what was done, so the run can be recreated
+by hand:
+
+- The SID and CIFAKE manifests were combined with `pandas.concat` in a
+  Kaggle notebook.
+- The `path` and `source` fields were normalized so rows from the two
+  datasets were addressable in one frame.
+- The training set was balanced to **11,888 images per dataset-label group**
+  — SID real, SID fake, CIFAKE real, CIFAKE fake — with **seed 42**.
+- The validation set was balanced the same way.
+
+No tooling was added to the repository for any of this. So the numbers are
+recorded, but reproducing them means rebuilding the merge by hand and
+trusting that you matched it, rather than running one command and getting
+the same file.
+
+**Future work:** a `--manifests a.csv b.csv` merge mode on
+`src/build_manifest.py` that concatenates, normalizes the shared columns and
+balances per dataset-label group under a given seed, would turn the above
+into a single reproducible step and let the mixed model be rebuilt from the
+repo alone.
+
 ### 5. Train the three experiments
 
 `train.py` trains one experiment per run, selected by config file:
@@ -474,6 +501,44 @@ or underscores. They are used in column names and filenames; titles are the
 human-readable descriptions shown in the results. Add or remove aligned list
 items to evaluate two, three, four, five, or more models without changing the
 Python source.
+
+### Getting the checkpoints
+
+Trained checkpoints are **not in this repository** — `*.pt` is gitignored
+because the files are far too large for git. They are hosted on Google Drive.
+
+**The one you want is `effnet_b0_sid_cifake_experiment_b_best.pt`**, the mixed
+SID+CIFAKE model, which is what step 7 below and the submission both use:
+
+<https://drive.google.com/file/d/1bz3KfWIPr422c7rGM9hYH3zs6wSr7pc7/view>
+
+After downloading, verify the file is intact:
+
+```bash
+# Mac/Linux
+shasum -a 256 effnet_b0_sid_cifake_experiment_b_best.pt
+```
+
+```powershell
+# Windows (PowerShell)
+Get-FileHash effnet_b0_sid_cifake_experiment_b_best.pt -Algorithm SHA256
+```
+
+Expected SHA-256:
+
+```
+9159a9d4ceb7fccd3eee24c3ddf9600c79c8abf1444cb0646b93ac66fd3b5c44
+```
+
+That hash is recorded in
+[results/sid_mixed_model/robustness_config.json](results/sid_mixed_model/robustness_config.json),
+alongside the run that produced every SID number in this README — so the file
+you download is provably the file those results came from.
+
+> **Do not skip this step.** `predict.py` runs without `--checkpoint`, but it
+> falls back to **random predictions** and prints a warning to stderr. The
+> output is well-formed JSON with plausible-looking values that mean nothing.
+> If you are evaluating this project, download the checkpoint first.
 
 ### 7. Run predict.py for the final submission
 

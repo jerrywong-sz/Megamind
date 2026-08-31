@@ -298,6 +298,12 @@ local.
 **`effnet_b0_sid_cifake_experiment_b_best.pt`** — EfficientNet-B0 trained on
 SID_Set and CIFAKE together, SHA-256 `9159a9d4ceb7fccd…`.
 
+Checkpoints are gitignored for size and hosted on Google Drive — download it
+at <https://drive.google.com/file/d/1bz3KfWIPr422c7rGM9hYH3zs6wSr7pc7/view>
+and verify against the full SHA-256 in the repo's README; without
+`--checkpoint`, `predict.py` falls back to random output with a stderr
+warning.
+
 It is deliberately **not** the best checkpoint on either dataset taken
 alone: the SID-only model beats it by 0.47pp on SID (99.78% against 99.31%).
 But it is the only checkpoint that does not collapse on a dataset it was not
