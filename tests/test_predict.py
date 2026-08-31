@@ -1,5 +1,9 @@
 """Smoke test for the inference pipeline: does it run end-to-end without crashing
-on a handful of awkward inputs, using the random fallback (no checkpoint needed)?
+on a handful of awkward inputs?
+
+No trained checkpoint is needed. These tests use predict.py's random fallback,
+which must be opted into with --allow-random; one test covers the refusal that
+happens when it is not.
 """
 
 import json
@@ -32,20 +36,51 @@ def make_test_images(root: Path) -> int:
     return 4
 
 
-def run_predict(input_dir: Path, output_path: Path, *extra_args: str):
-    """Run predict.py as a subprocess, exactly as a judge would invoke it."""
+def run_predict(
+    input_dir: Path,
+    output_path: Path,
+    *extra_args: str,
+    allow_random: bool = True,
+):
+    """Run predict.py as a subprocess, exactly as a judge would invoke it.
+
+    These smoke tests have no trained checkpoint, so they run the random
+    fallback, which predict.py requires --allow-random to enter. Pass
+    allow_random=False to exercise the refusal itself.
+    """
+    command = [
+        sys.executable,
+        str(REPO_ROOT / "predict.py"),
+        "--input_dir", str(input_dir),
+        "--output", str(output_path),
+    ]
+    if allow_random:
+        command.append("--allow-random")
+    command.extend(extra_args)
+
     return subprocess.run(
-        [
-            sys.executable,
-            str(REPO_ROOT / "predict.py"),
-            "--input_dir", str(input_dir),
-            "--output", str(output_path),
-            *extra_args,
-        ],
+        command,
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
     )
+
+
+def test_predict_refuses_random_output_without_explicit_opt_in(tmp_path):
+    """Without a checkpoint AND without --allow-random, refuse rather than
+    emit random numbers that look exactly like real predictions."""
+    input_dir = tmp_path / "images"
+    input_dir.mkdir()
+    make_test_images(input_dir)
+
+    output_path = tmp_path / "preds.json"
+
+    result = run_predict(input_dir, output_path, allow_random=False)
+
+    assert result.returncode != 0, "predict.py should refuse, not succeed"
+    assert not output_path.exists(), "no output file should be written on refusal"
+    assert "--allow-random" in result.stderr
+    assert "--checkpoint" in result.stderr
 
 
 def test_predict_runs_end_to_end_with_random_fallback(tmp_path):

@@ -9,8 +9,11 @@ pipeline, and does it still work on a generator it has never seen?
 The first question has a good answer — robustness augmentation removes 85.4%
 of the errors that transforms introduce. The second nearly did not. Our
 best detector, 99.8% accurate on its own dataset, turned out to score **at
-chance** on images from a different generator. We traced that failure to its
-cause and fixed it, and the fix cost 0.47 accuracy points. That arc is
+chance** on images from a different generator. Our evidence pointed strongly
+to training-distribution shift rather than backbone choice; adding a second
+training source removed the observed SID↔CIFAKE collapse for 0.47 accuracy
+points, though generalization to a third unseen generator remains unproven.
+That arc is
 [the most important thing in this submission](#the-finding-that-matters-most-cross-domain-collapse-and-the-fix).
 
 ---
@@ -45,8 +48,11 @@ where the model was emphatic and wrong (an AI image scored ≤0.05, or a real
 image scored ≥0.95), the baseline makes 22,027 and the augmented model 972 — a
 23× difference. Calibration follows: in the augmented model's ≥0.99 score band,
 99.0% of images really are AI-generated; in the baseline's >0.9 band, only 85.8%
-are. The augmented model's output is usable as a probability. The baseline's is
-not.
+are. So the augmented model is **better calibrated than the baseline in our
+in-distribution confidence analysis**. That analysis was run on CIFAKE, where
+the augmented model was in-distribution; confidence bands on one dataset are
+not a calibration guarantee, and cross-domain the same scores become
+uninformative (see the collapse below).
 
 ### Why the comparison is meaningful
 
@@ -70,9 +76,33 @@ is equally controlled: both models see the same images in the same order under
 each condition, Gaussian noise is seeded per image so both receive identical
 noisy pixels, and checkpoint SHA-256 hashes are recorded with every run.
 
-Training and inference share one preprocessing function
-(`get_eval_transform()`), imported by both paths, so the two cannot silently
-drift apart — a mismatch there produces no error, only quietly worse accuracy.
+Validation, evaluation and inference all share one preprocessing function,
+`get_eval_transform()` in `src/data.py`, imported by every path that scores a
+model, so those cannot silently drift apart — a mismatch there produces no
+error, only quietly worse accuracy. Training deliberately uses a different
+transform (`get_train_transform()`, or `get_robust_train_transform()` for the
+augmented arms), since that is where the augmentation is applied.
+
+### What this is for
+
+The intended use is a **lightweight triage signal, not proof that an image is
+synthetic**. A platform could run it over uploaded images after the normal
+compression and resizing an upload pipeline applies — which is the regime the
+robustness work targets — and feed the resulting probability into moderation
+alongside provenance data, upload history and other signals, rather than
+treating it as a verdict.
+
+Keeping EfficientNet-B0 rather than a larger backbone is what makes that
+feasible at platform scale: **1.14 ms per image**, against 4.12 ms for
+ConvNeXt-Tiny for a difference in accuracy we could not distinguish from
+noise. At upload volumes that is the difference between a signal you can
+afford to compute on everything and one you cannot.
+
+The false-positive analysis is the reason the output should not stand alone.
+Robustness training raises the clean false-positive rate from 1.97% to 2.69%,
+and every false positive is a real photograph flagged as synthetic. On a
+large platform that is a lot of people wrongly accused if the score is used
+as a decision rather than an input to one.
 
 ### The trade we are not hiding
 
@@ -216,18 +246,20 @@ unchanged: 0.9998 against 0.9999.
 | SID-only ConvNeXt-Tiny | 99.80% | 49.38% |
 | **Mixed SID+CIFAKE B** | **99.31%** | **97.19%** |
 
-**The failure was never about the model.** Two backbones from different
-families — 4.0M and 27.8M parameters — trained on the same data collapse to
-within 0.03pp of each other, both to a near-constant "real" prediction.
-Architecture and capacity are ruled out. What the failing models share is
-their training distribution.
+**Backbone choice was not the dominant factor.** Two backbones from
+different families — 4.0M and 27.8M parameters — trained on the same data
+collapse to within 0.03pp of each other, both to a near-constant "real"
+prediction. Tripling the parameter count changed nothing we could measure,
+so the evidence points much more strongly to the training distribution than
+to architecture or capacity. Two architectures is strong evidence, not
+proof; a third family might behave differently, and we did not test one.
 
-**Source diversity is the lever, and it is cheap.** Adding a second training
-source costs **0.47 points** on the original dataset and gains **47.78
-points** on the previously unseen one — roughly a hundred points gained for
-each one given up. The fix is not a better architecture, more parameters, or
-heavier augmentation; augmentation does nothing for this failure mode. It is
-more than one source of images in training.
+**Training-source diversity was far more influential than scaling the
+backbone in our experiments.** Adding a second training source costs **0.47
+points** on the original dataset and gains **47.78 points** on the
+previously unseen one — roughly a hundred points gained for each one given
+up. Neither a larger backbone nor heavier augmentation moved this failure
+mode at all; a second source of images did.
 
 The honest limit: this is one direction, one seed, two datasets. We have
 shown that adding a source fixes performance on that source almost for free.
@@ -238,6 +270,14 @@ that.
 ## A negative result: consistency training did not help
 
 Experiment C is reported as a **negative result**.
+
+> **Reproducibility caveat.** Experiment C does not run through the current
+> CLI. `train.py` handles `train_mode: consistency`, but `get_dataloaders()`
+> in `src/data.py` accepts only `clean` or `robust` and raises
+> `ValueError: Unknown train_mode 'consistency'` before training starts. The
+> C numbers below come from a separate, earlier run and cannot be regenerated
+> with `python train.py --config configs/consistency.yaml` as the repository
+> stands. Experiments A and B run as documented.
 
 Across the 16 single-transform conditions, C beat B in **9** and lost in **7**,
 with a **mean difference of −0.09 percentage points** and a maximum absolute
@@ -315,7 +355,8 @@ forty-eight on another.
 
 ## 4. Libraries and frameworks
 
-From `requirements.txt`, with the versions used:
+From `requirements.txt`, which pins each package to the version our final
+environment ran:
 
 | Library | Version | Role |
 |---|---|---|
@@ -345,7 +386,11 @@ the exact challenge parameter values are reproduced rather than approximated.
   the SID models, which is where the cross-domain collapse above shows up.
 - **SID_Set** (Hugging Face, CC BY 4.0) — ~300K images generated with FLUX,
   including a tampered class (real photographs with an AI-generated region
-  inserted). **SID_Set results are included in this submission**: three
+  inserted). **We did not use the full dataset.** Our balanced binary
+  manifest has a **5,099-image validation split**, which every SID number in
+  this submission is measured on; under the 70/15/15 split that implies a
+  total on the order of 34,000 images, not 300K. **SID_Set results are
+  included in this submission**: three
   robustness-trained architectures evaluated across the 16-condition grid on
   5,099 validation images per condition, reported above, plus a clean-trained
   SID baseline compared against the robustness-trained model. Its tampered

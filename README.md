@@ -28,6 +28,15 @@ half an accuracy point. See
 [Cross-domain generalization](#cross-domain-generalization-what-sid-accuracy-does-not-tell-you)
 for that arc; it is the strongest finding in this project.
 
+**What it's for.** This is a lightweight **triage signal, not proof that an
+image is synthetic**. A platform could run it over uploads after the usual
+compression and resizing, and feed the probability into moderation alongside
+provenance and other signals rather than treating it as a verdict. Keeping
+EfficientNet-B0 instead of a larger backbone is what makes that affordable at
+scale — **1.14 ms per image** — and our false-positive analysis (clean-set
+FPR rises from 1.97% to 2.69% with robustness training) is why the score
+should never stand alone as an accusation against a real photograph.
+
 ## Setup and installation
 
 Requires Python 3.10+.
@@ -61,13 +70,21 @@ Options:
 - `--input_dir` (required) — directory to scan recursively for images
   (`.jpg`, `.jpeg`, `.png`, `.webp`, `.bmp`, case-insensitive)
 - `--checkpoint` (optional) — path to a trained model checkpoint. If
-  omitted, predictions fall back to random values with a warning printed to
-  stderr — useful for testing the pipeline before a checkpoint exists, but
-  **not a real detector output**
+  omitted, `predict.py` **exits with an error** rather than guessing; see
+  `--allow-random` below
+- `--allow-random` (optional) — run without a checkpoint, emitting **random**
+  `pred` values. Required as an explicit opt-in because the output file is
+  valid JSON in the exact submission format, so nothing in the artifact
+  distinguishes random numbers from real predictions. Use it to smoke-test the
+  pipeline before a checkpoint exists; never to produce results.
 - `--output` (required) — path to write the output JSON to
 - `--batch_size` (optional, default `32`) — images per inference batch
-- `--architecture` (optional) — which backbone to build (`efficientnet_b0`
-  or `convnext_tiny`). **Normally unnecessary:** checkpoints written by
+- `--architecture` (optional) — which backbone to build. Listed here are
+  the submission-supported backbones, `efficientnet_b0` and `convnext_tiny`;
+  [src/models.py](src/models.py) also builds `dinov2_vits14`, which we
+  evaluated and dropped, and which pulls its weights from `torch.hub` at
+  build time rather than from `requirements.txt`. **Normally unnecessary:**
+  checkpoints written by
   `train.py` record their own architecture, and that recorded value is used.
   This flag supplies the architecture for older checkpoints saved before
   that metadata existed; if the checkpoint does record one and you pass a
@@ -110,7 +127,14 @@ above, then keep it active for every command below.
 - **CIFAKE** (Kaggle) — <https://www.kaggle.com/datasets/birdy654/cifake-real-and-ai-generated-synthetic-images>
 - **SID_Set** (Hugging Face, **gated**) — <https://huggingface.co/datasets/saberzl/SID_Set>.
   You must request access on that page before you can download it; approval
-  isn't instant, so request it early.
+  isn't instant, so request it early. The published dataset is ~300K images;
+  **we did not use all of it.** After JPEG normalization, de-duplication and
+  50/50 class balancing our binary manifest has a **5,099-image validation
+  split** — the split every SID number in this README is measured on. With
+  the 70/15/15 split in step 4 that implies a total on the order of 34,000
+  images and a test split of similar size to validation; the exact train and
+  test counts are not recorded in any committed file, so treat the 34,000 as
+  derived rather than measured.
 - **WildFake subset** (COCO val2017 real images + DALL·E Advanced generated
   images) — <https://modelscope.cn/datasets/hy2628982280/WildFake/summary>.
   This is a **held-out demonstration benchmark only**. Do **not** train on
@@ -278,9 +302,11 @@ training method. Checkpoints are written to `checkpoint_dir`/`checkpoint_name`
 (`checkpoints/baseline.pt`, `robustness.pt`, `consistency.pt`); `checkpoints/`
 and `*.pt` are gitignored.
 
-Checkpoints are saved as a dict (`{epoch, model_state, optimizer_state}`)
-for resumability. `predict.py` and `evaluate.py` both accept either that
-form or a bare state dict.
+Checkpoints are saved as a dict
+(`{epoch, architecture, model_state, optimizer_state}`) for resumability.
+The `architecture` field is what lets `predict.py` and `evaluate.py` rebuild
+the right backbone without being told which one to use. Both accept either
+that form or a bare state dict.
 
 ### 6. Evaluate against the challenge transform grid
 
@@ -535,10 +561,11 @@ That hash is recorded in
 alongside the run that produced every SID number in this README — so the file
 you download is provably the file those results came from.
 
-> **Do not skip this step.** `predict.py` runs without `--checkpoint`, but it
-> falls back to **random predictions** and prints a warning to stderr. The
-> output is well-formed JSON with plausible-looking values that mean nothing.
-> If you are evaluating this project, download the checkpoint first.
+> **Do not skip this step.** Without `--checkpoint`, `predict.py` refuses to
+> run and exits with an error telling you to download one. It *can* emit
+> random values, but only if you explicitly pass `--allow-random`, because
+> that output is well-formed JSON in the submission format and nothing in the
+> file itself would reveal the numbers are meaningless.
 
 ### 7. Run predict.py for the final submission
 
@@ -972,20 +999,21 @@ Putting the three cross-domain results together:
 
 Two conclusions follow, and they are the strongest results in this project.
 
-**The failure was never about the model.** Two backbones from different
-families — 4.0M and 27.8M parameters, convolutional and modernized-ConvNeXt
-designs — trained on the same data, collapse to within 0.03pp of each other
-on CIFAKE, both to a near-constant "real" prediction. Architecture and
-capacity are ruled out. What the two failing models share is their training
-distribution.
+**Backbone choice was not the dominant factor.** Two backbones from
+different families — 4.0M and 27.8M parameters, convolutional and
+modernized-ConvNeXt designs — trained on the same data collapse to within
+0.03pp of each other on CIFAKE, both to a near-constant "real" prediction.
+Tripling the parameter count changed nothing we could measure, so the
+evidence points much more strongly to the training distribution than to
+architecture or capacity. Two architectures is strong evidence rather than
+proof: a third family might behave differently, and we did not test one.
 
-**Source diversity is the lever, and it is remarkably cheap.** Adding a
-second training source costs **0.47pp** on the original dataset and gains
-**47.78pp** on the previously unseen one. That is roughly a hundred points
-gained for every point given up. The fix is not a better architecture, more
-parameters, or heavier augmentation — augmentation, as the cross-domain
-results show, does nothing for this failure mode. It is more than one source
-of images in training.
+**Training-source diversity was far more influential than scaling the
+backbone in our experiments.** Adding a second training source costs
+**0.47pp** on the original dataset and gains **47.78pp** on the previously
+unseen one — roughly a hundred points gained for every point given up.
+Neither a larger backbone nor heavier augmentation moved this failure mode
+at all; a second source of images did.
 
 The honest scope: this is one direction (SID → SID+CIFAKE), one seed, and
 two datasets. We have shown that adding a source fixes performance on that
@@ -1321,6 +1349,12 @@ not.
 
 ## Team member contributions
 
+Note that some team members committed under more than one Git identity
+(different machines, or a changed username mid-project). The repo's
+`.mailmap` collapses these — `git shortlog -sn` shows the five
+contributors listed below. GitHub's web contributor graph does not read
+`.mailmap`, so it displays the raw identities.
+
 **Isaac — Model Lead.** Owned the model architecture and the training
 pipeline, and ran Experiments A, B and C covering clean training, robustness
 augmentation and consistency training. Main contributions: `train.py`, the
@@ -1329,8 +1363,9 @@ and the checkpoint workflow the evaluation scripts read from.
 
 **Jerry — Integration Lead.** Repo setup and structure; the inference
 pipeline (`predict.py`) and its smoke tests; the shared evaluation
-preprocessing (`get_eval_transform()` in `src/data.py`) that keeps training
-and inference from drifting apart; the error analysis and robustness-curve
+preprocessing (`get_eval_transform()` in `src/data.py`) that keeps
+validation, evaluation and inference from drifting apart; the error analysis
+and robustness-curve
 scripts in `scripts/`; and the README, reproduction steps and
 `results/decisions.md`.
 

@@ -38,9 +38,9 @@ def load_model(
     """Load a trained model, supporting architecture-aware checkpoints."""
     if checkpoint is None:
         print(
-            "WARNING: no --checkpoint provided. Predictions will be RANDOM, "
-            "not real model output. Pass --checkpoint <path> once a trained "
-            "checkpoint is available.",
+            "WARNING: running with --allow-random and no checkpoint. "
+            "Every 'pred' value below is RANDOM, not model output. "
+            "Do not report these numbers as results.",
             file=sys.stderr,
         )
         return None
@@ -126,10 +126,35 @@ def main():
             "image_path + pred."
         ),
     )
+    parser.add_argument(
+        "--allow-random",
+        action="store_true",
+        help=(
+            "Permit running without --checkpoint, producing RANDOM predictions. "
+            "Required to opt in, because the output JSON is indistinguishable "
+            "from real output. For smoke-testing the pipeline only."
+        ),
+    )
     args = parser.parse_args()
 
     if not args.input_dir.is_dir():
         print(f"ERROR: --input_dir '{args.input_dir}' is not a directory.", file=sys.stderr)
+        sys.exit(1)
+
+    # Refuse to silently emit random numbers. The output file is valid JSON in
+    # the submission format either way, so a reader who missed a stderr warning
+    # would have no way to tell real predictions from noise. Make it explicit.
+    if args.checkpoint is None and not args.allow_random:
+        print(
+            "ERROR: no --checkpoint provided.\n"
+            "  Without a checkpoint this script can only emit RANDOM predictions, "
+            "which look exactly like real output.\n"
+            "  Pass --checkpoint <path_to_checkpoint.pt> to run the detector, or "
+            "--allow-random to deliberately generate random values for a smoke test.\n"
+            "  See the 'Getting the checkpoints' section of the README for the "
+            "download link.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
