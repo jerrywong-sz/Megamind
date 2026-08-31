@@ -10,10 +10,23 @@ through a social platform's upload pipeline), and a detector that only works
 on pristine images isn't useful. The model is trained and evaluated to stay
 accurate under these transformations, not just on clean inputs.
 
-Architecture: EfficientNet-B0 backbone with a single-logit head (sigmoid ->
-probability the image is AI-generated). See [src/models.py](src/models.py)
-and [src/data.py](src/data.py) for the model definition and the shared
-preprocessing pipeline used by both training and inference.
+Architecture: **EfficientNet-B0** backbone with a single-logit head (sigmoid
+-> probability the image is AI-generated). We also trained and evaluated
+**ConvNeXt-Tiny** and **DINOv2 ViT-S/14** on the same data;
+[src/models.py](src/models.py) builds all three, and
+[src/data.py](src/data.py) holds the shared preprocessing pipeline used by
+both training and inference.
+
+EfficientNet-B0 is the architecture we recommend, and the comparison is part
+of why: ConvNeXt-Tiny is statistically indistinguishable from it on SID
+while costing 3.6× the inference time, and DINOv2 is materially weaker. The
+more important result, though, is that **architecture matters far less than
+what the model is trained on**. A model trained on one generator scores at
+chance on another regardless of backbone — EfficientNet-B0 and ConvNeXt-Tiny
+fail identically — while adding a second training source fixes it for about
+half an accuracy point. See
+[Cross-domain generalization](#cross-domain-generalization-what-sid-accuracy-does-not-tell-you)
+for that arc; it is the strongest finding in this project.
 
 ## Setup and installation
 
@@ -482,8 +495,23 @@ metadata existed do you need to name the architecture explicitly:
 python predict.py --input_dir <path_to_test_images> --checkpoint <legacy_checkpoint.pt> --architecture convnext_tiny --output results/preds.json
 ```
 
-TODO: fill in the real `--checkpoint` path once an experiment (A/B/C — TBD)
-produces the checkpoint we're submitting.
+**The checkpoint we recommend submitting is
+`effnet_b0_sid_cifake_experiment_b_best.pt`** (EfficientNet-B0, SHA-256
+`9159a9d4ceb7fccd…`, recorded in
+[results/sid_mixed_model/robustness_config.json](results/sid_mixed_model/robustness_config.json)):
+
+```bash
+python predict.py --input_dir <path_to_test_images> --checkpoint effnet_b0_sid_cifake_experiment_b_best.pt --output results/preds.json
+```
+
+This is the SID+CIFAKE mixed model. It is not the highest-scoring checkpoint
+on any single dataset — the SID-only model beats it by 0.47pp on SID — but
+it is the only one that works on *both* datasets instead of collapsing to
+chance on the one it was not trained on (99.31% on SID and 97.19% on CIFAKE,
+against the SID-only model's 99.78% and 49.41%). A submission is scored on
+images whose generator we do not know in advance, so the model that holds up
+across sources is the right trade. The reasoning is in
+[Synthesis](#synthesis-the-problem-is-the-training-distribution).
 
 ## Results tables
 
@@ -943,11 +971,10 @@ is worth tracking rather than dismissing: the challenge specifically warns
 against false positives on genuine photographs, and this shift moves in
 that direction, even though it's a small one at this stage.
 
-`clean_metrics_a_b.csv` also records both checkpoints' SHA-256 hashes
-(`checkpoint_hash` column), which partially addresses the
-`robustness_config.json` traceability TODO below — the clean-evaluation
-checkpoints are identifiable now, though the robustness-grid run still
-isn't.
+`clean_metrics_a_b.csv` also records both checkpoints' SHA-256 hashes in a
+`checkpoint_hash` column, so these numbers are traceable to specific
+checkpoint files. The same is true of every evaluation in this README — see
+[Data provenance](#data-provenance) for the committed run configs.
 
 ### Robustness evaluation — Experiment A vs. Experiment B
 
@@ -1070,13 +1097,25 @@ the resize+JPEG combination above.
   **gitignored due to size** and are not in the repo. Full per-image error
   analysis (which specific images each model gets wrong) would need to be
   regenerated locally by re-running `evaluate.py`.
-- TODO: `robustness_config.json` (the checkpoint SHA-256 hashes, split,
-  seed, and condition grid `evaluate.py` writes automatically for each
-  run) **has not been committed yet**. Until it is, these numbers aren't
-  yet traceable to a specific checkpoint file with certainty.
-
-TODO: error analysis (which images/generators/conditions each model gets
-wrong) hasn't been done either.
+- Run configs **are** committed, for every evaluation reported in this
+  README. Each records the checkpoint SHA-256 hashes, architecture, split,
+  seed, threshold and full condition grid, so every number above is
+  traceable to a specific checkpoint file:
+  [results/sid/run_config.json](results/sid/run_config.json),
+  [results/sid_a_vs_b/](results/sid_a_vs_b/robustness_config.json),
+  [results/sid_a_vs_b_chained/](results/sid_a_vs_b_chained/random_standard_3__run_config.json),
+  [results/cross_domain_cifake/](results/cross_domain_cifake/robustness_config.json),
+  [results/cross_domain_convnext/](results/cross_domain_convnext/robustness_config.json),
+  [results/cifake_mixed_model/](results/cifake_mixed_model/robustness_config.json),
+  [results/cifake_mixed_chained/](results/cifake_mixed_chained/random_standard_3__run_config.json)
+  and [results/sid_mixed_model/](results/sid_mixed_model/robustness_config.json).
+- Per-image error analysis **has** been done for the CIFAKE A/B comparison:
+  [results/error_analysis.md](results/error_analysis.md), generated
+  deterministically by [scripts/error_analysis.py](scripts/error_analysis.py)
+  from the 471,168-row prediction dump. It covers false positives, false
+  negatives, transformation flips, high-confidence mistakes, repeat failures
+  and calibration bands. The script regenerates it from a local
+  `robustness_predictions.csv`; the dump itself stays gitignored.
 
 ## Limitations and what we'd improve with more time
 
@@ -1084,16 +1123,22 @@ Every figure below comes from
 [results/error_analysis.md](results/error_analysis.md) and the CSVs in
 `results/`.
 
-**Nothing we trained generalizes across generators.** This is the most
-serious limitation we have, and we found it ourselves rather than having it
-found for us. Both SID-trained models score at chance on CIFAKE — 51.18% and
-49.41% against a 49.31% all-real floor, with AUROC reaching 0.5015 under
-blur σ2.0 and zero AI images detected under noise. Robustness training does
-not help; a threshold sweep recovers at most ~60%. Whatever our detectors
-learned about FLUX images does not describe Stable Diffusion 1.4 images at
-all. We have no reason to expect a different outcome on a third generator,
-and the WildFake cross-generator benchmark is still unrun, so for generators
-outside our two datasets we have **no evidence at all**.
+**Generalization to a third, unseen generator is unproven.** A model
+trained on one generator fails completely on another: both SID-only models
+score at chance on CIFAKE — 51.18% and 49.41% against a 49.31% all-real
+floor, AUROC as low as 0.5015, zero AI images detected under noise, and no
+threshold recovering more than ~60%. Robustness augmentation does not help,
+and neither does changing architecture. Training on **both** sources fixes
+it: the mixed model reaches 97.19% on CIFAKE for a 0.47pp cost on SID (see
+[Synthesis](#synthesis-the-problem-is-the-training-distribution)).
+
+What that does **not** establish is that a model trained on two generators
+handles a third it has never seen. We have shown that adding a source fixes
+that source, cheaply — one direction, one seed, two datasets. Whether source
+diversity confers *general* robustness to unseen generators is exactly what
+the held-out WildFake benchmark would test, and it remains unrun. Until it
+is, treat any claim about a generator absent from training as unsupported,
+with one demonstrated data point on how severe that failure can be.
 
 **The augmentation effect is demonstrated on CIFAKE, and narrowly on SID.**
 The A→B transformation-flip result (38,504 → 5,611) comes from CIFAKE: 32×32
@@ -1161,6 +1206,15 @@ are, and images A scores below 0.1 are still AI 11.9% of the time. So B's
 A's are not. (Measured across all 16 conditions, so A's figure is dragged
 down substantially by the conditions where it collapses.)
 
+**That calibration result holds only in-distribution.** It was measured on
+CIFAKE, where B was trained. Run a SID-trained model on CIFAKE instead and
+its calibration collapses along with everything else: scores sit below the
+threshold almost regardless of content, AUROC falls to 0.5015, and a
+threshold sweep recovers at most ~60% accuracy — no threshold makes those
+outputs useful, because the ranking itself carries almost no signal. A
+`pred` value is interpretable as a probability only for images resembling
+what the model was trained on.
+
 **The tampered holdout is correctly quarantined, but the analysis it
 enables has never been run.** `src/build_manifest.py` routes tampered
 SID_Set images (label `2.0`) to a dedicated `bonus` split, and
@@ -1189,15 +1243,16 @@ needed types via `torch.serialization.add_safe_globals` and restore
 (a sidecar JSON, or the checkpoint filename) so the weights can be loaded
 under the safe path.
 
-**What we'd do with more time.** In priority order: retrain on SID_Set so
-the detector sees high-resolution images and a second generator; run the
-held-out WildFake subset (COCO val2017 + DALL·E Advanced) to get a real
-cross-generator generalization number, which is currently our largest
-unknown; and manually inspect the 40 persistent failures to establish
-whether CIFAKE carries label noise. Beyond that: tune the decision
-threshold to claw back Experiment B's false-positive rate, and re-run the
-A/B/C ablation across multiple seeds so a 0.64pp difference between B and
-C could actually be called significant or not.
+**What we'd do with more time.** In priority order: run the held-out
+WildFake subset (COCO val2017 + DALL·E Advanced) against the mixed model, to
+find out whether training on two generators helps on a third — this is now
+our largest unknown by a wide margin, and the one result that would turn the
+source-diversity finding from a demonstration into a general claim; manually
+inspect the 40 persistent failures to establish whether CIFAKE carries label
+noise; tune the decision threshold to claw back Experiment B's
+false-positive rate; and re-run the A/B/C ablation across multiple seeds so
+a 0.64pp difference between B and C could actually be called significant or
+not.
 
 ## Team member contributions
 
