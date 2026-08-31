@@ -1074,6 +1074,46 @@ at 0.9998 against 0.9999, and mean AUROC across the damaged conditions is
 0.9995 against 0.9999 — the ranking quality survives intact. Source:
 [results/sid_mixed_model/robustness_metrics.csv](results/sid_mixed_model/robustness_metrics.csv).
 
+**Under chained damage the cost is the same size.** Both models were also run
+through the random three-transform grid on SID — 5 trials (seeds 42–46) over
+the same 5,099 images, 25,495 pooled predictions:
+
+| | SID-only B | Mixed SID+CIFAKE B |
+|---|---:|---:|
+| Clean accuracy | 99.78% | 99.31% |
+| Pooled chained accuracy | 99.03% | **98.63%** |
+| Trial std. dev. | 0.08pp | 0.10pp |
+| Pooled AUROC | 0.9997 | 0.9985 |
+| False-negative rate | 1.77% | 1.83% |
+| False-positive rate | 0.20% | 0.93% |
+| Drop from clean | 0.75pp | **0.69pp** |
+| Clean-correct retention | 99.11% | 99.01% |
+
+The gap under stacked damage is **0.40pp**, against 0.47pp on clean images.
+So the price of adding CIFAKE to training is now measured in both regimes and
+is **uniformly small** — it is not concentrated in clean images, in any single
+transform, or in chained damage. False-negative rates are effectively
+identical (1.77% vs 1.83%); the mixed model's small real cost is a
+false-positive rate of 0.93% against 0.20%, a slightly greater willingness to
+call a genuine image AI-generated.
+
+**The mixed model degrades more slowly, not faster.** It drops **0.69pp** from
+its own clean accuracy under chaining, against the SID-only model's 0.75pp.
+Its lower absolute score reflects a lower starting point, not worse
+robustness — a distinction the pooled-accuracy column alone would hide.
+
+> **These retention and drop columns mean what they appear to mean** — unlike
+> [the CIFAKE chained comparison](#mixed-model-under-chained-damage--and-a-column-that-misleads)
+> above, where the SID-only model's near-perfect retention was an artifact of
+> its being a constant "predict real" classifier. Here both models genuinely
+> discriminate on the data they are being scored on: pooled recall is 98.23%
+> and 98.17%, against 2.26% in the CIFAKE case. Damage can actually change
+> these models' answers, so measuring how often it does is meaningful.
+
+Source: [results/sid_mixed_chained/](results/sid_mixed_chained/) — headline,
+overall summary, per-trial metrics, chain-pattern and transform-inclusion
+breakdowns, and the per-image false-positive/false-negative list.
+
 #### Synthesis: the problem is the training distribution
 
 Putting the three cross-domain results together:

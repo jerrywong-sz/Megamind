@@ -238,6 +238,18 @@ the same 16 conditions. It gives up **0.47pp** on clean images (99.78% →
 σ0.10). No condition costs more than 0.92pp, and AUROC is essentially
 unchanged: 0.9998 against 0.9999.
 
+Under *chained* damage on SID (5 trials, 25,495 pooled predictions) the gap is
+the same size: **99.03% against 98.63%**, a 0.40pp difference, with AUROC
+0.9997 against 0.9985 and near-identical false-negative rates (1.77% vs
+1.83%). The cost of adding CIFAKE to training is therefore uniformly small
+across both regimes rather than concentrated anywhere. And the mixed model
+drops **less** from its own clean accuracy under chaining — 0.69pp against
+0.75pp — so its lower absolute score reflects a lower starting point, not
+faster degradation. Unlike the CIFAKE chained comparison above, where the
+SID-only model's retention figures were an artifact of a constant classifier,
+both models here genuinely discriminate (pooled recall 98.23% and 98.17%), so
+the retention and drop columns mean what they appear to mean.
+
 ### What the three results say together
 
 | | SID | CIFAKE |

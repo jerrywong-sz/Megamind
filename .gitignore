@@ -237,4 +237,8 @@ results/**/*per_image_chain_assignments.csv
 results/**/*false_positives_and_false_negatives.csv
 results/robustness_predictions.csv
 results/clean_predictions.csv
+
+# Exception: the SID chained run's FP/FN dump is only 540KB (the CIFAKE one
+# that motivated the rule above is 44MB), and it is small enough to commit.
+!results/sid_mixed_chained/random_standard_3__false_positives_and_false_negatives.csv
 predictions.json
