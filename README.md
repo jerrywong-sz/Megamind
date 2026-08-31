@@ -10,6 +10,7 @@
   - [SID_Set results — architecture comparison](#sid_set-results--architecture-comparison)
   - [Cross-domain generalization](#cross-domain-generalization-what-sid-accuracy-does-not-tell-you)
   - [Synthesis: the problem is the training distribution](#synthesis-the-problem-is-the-training-distribution)
+  - [Error analysis](#error-analysis)
 - [Limitations and what we'd improve with more time](#limitations-and-what-wed-improve-with-more-time)
 - [Team member contributions](#team-member-contributions)
 
@@ -1306,6 +1307,41 @@ ranges could have produced during training; the other three novel chains
 (screenshot resample, triple-repeated JPEG, crop+colour+JPEG) were not,
 and still degraded gracefully rather than catastrophically — except for
 the resize+JPEG combination above.
+
+### Error analysis
+
+A per-image error analysis is committed at
+[results/error_analysis.md](results/error_analysis.md), generated
+deterministically by
+[scripts/error_analysis.py](scripts/error_analysis.py) from the 471,168-row
+prediction dump (2 models × 16 conditions × 14,724 images).
+
+**Scope: the CIFAKE A vs. B comparison only.** That is the run for which we
+retained per-image predictions, so it is the only one that supports
+image-level analysis. Nothing here speaks to SID_Set or to the cross-domain
+results.
+
+Three findings carry most of the weight:
+
+- **Transformation flips — A = 38,504, B = 5,611.** Images each model gets
+  right when clean and wrong after a transform, summed over the 15
+  transformed conditions. Augmentation removes 32,893 of them, 85.4% of the
+  baseline's. This is the clearest single measurement of what the
+  augmentation buys.
+- **High-confidence mistakes — A = 22,027, B = 972.** Errors where the model
+  was emphatic and wrong (an AI image scored ≤0.05, or a real image ≥0.95).
+  A 23× reduction: the baseline is not only wrong more often, it is
+  confidently wrong far more often.
+- **40 images the augmented model fails in all 16 conditions** (against 3 for
+  the baseline). No amount of augmentation moves them, which points at label
+  noise or intrinsic ambiguity in CIFAKE rather than a robustness failure.
+  We did not open them to check — see
+  [Limitations](#limitations-and-what-wed-improve-with-more-time).
+
+The full report also covers false-positive and false-negative breakdowns,
+per-condition flip counts, repeat-offender concentration, and calibration
+bands. The script regenerates it from a local `robustness_predictions.csv`;
+that dump is gitignored for size.
 
 ### Data provenance
 

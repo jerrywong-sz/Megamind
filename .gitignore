@@ -242,3 +242,4 @@ results/clean_predictions.csv
 # that motivated the rule above is 44MB), and it is small enough to commit.
 !results/sid_mixed_chained/random_standard_3__false_positives_and_false_negatives.csv
 predictions.json
+demo_pics/
