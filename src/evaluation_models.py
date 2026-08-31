@@ -14,6 +14,7 @@ SUPPORTED_ARCHITECTURES = (
     "efficientnet_b0",
     "convnext_tiny",
     "dinov2_vits14",
+    "hybrid_effnet_dinov2",
 )
 MODEL_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_]*$")
 

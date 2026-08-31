@@ -19,25 +19,41 @@ from src.evaluation_models import (
 )
 
 
-def test_build_model_specs_supports_four_named_architectures():
+def test_build_model_specs_supports_named_architectures():
     specs = build_model_specs(
-        checkpoints=("d.pt", "e.pt", "f.pt", "g.pt"),
-        model_ids=("sid_a", "sid_b", "sid_convnext", "sid_dino"),
-        model_titles=("SID A", "SID B", "SID ConvNeXt", "SID DINO"),
+        checkpoints=("d.pt", "e.pt", "f.pt", "g.pt", "h.pt"),
+        model_ids=(
+            "sid_a",
+            "sid_b",
+            "sid_convnext",
+            "sid_dino",
+            "sid_hybrid",
+        ),
+        model_titles=(
+            "SID A",
+            "SID B",
+            "SID ConvNeXt",
+            "SID DINO",
+            "SID Hybrid",
+        ),
         architectures=(
             "efficientnet_b0",
             "auto",
             "convnext_tiny",
             "dinov2_vits14",
+            "hybrid_effnet_dinov2",
         ),
     )
 
-    assert len(specs) == 4
+    assert len(specs) == 5
     assert specs[0].checkpoint_path == Path("d.pt")
     assert specs[1].architecture is None
     assert specs[2].architecture == "convnext_tiny"
-    assert len(model_pairs(specs)) == 6
-    assert model_token(specs) == "sid_a_vs_sid_b_vs_sid_convnext_vs_sid_dino"
+    assert specs[4].architecture == "hybrid_effnet_dinov2"
+    assert len(model_pairs(specs)) == 10
+    assert model_token(specs) == (
+        "sid_a_vs_sid_b_vs_sid_convnext_vs_sid_dino_vs_sid_hybrid"
+    )
 
 
 def test_build_model_specs_rejects_misaligned_lists():
@@ -76,7 +92,7 @@ def test_all_evaluator_clis_accept_five_named_models(
         "efficientnet_b0",
         "convnext_tiny",
         "dinov2_vits14",
-        "auto",
+        "hybrid_effnet_dinov2",
     ]
     args = parser_factory().parse_args([
         *extra_arguments,
