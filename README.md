@@ -487,13 +487,14 @@ produces the checkpoint we're submitting.
 
 ## Results tables
 
-> **Scope note:** the results below come from two datasets and answer two
+> **Scope note:** the results below come from two datasets and answer
 > different questions. **SID_Set** (high-resolution, FLUX generator) carries
-> the architecture comparison — but every SID model is robustness-trained,
-> so the A→B robustness gain is *not* demonstrated there. **CIFAKE** (32×32,
-> Stable Diffusion 1.4) is the only place the A→B→C ablation exists. Neither
-> dataset says anything about generators the models have never seen; the
-> WildFake cross-generator benchmark is still held out and unrun.
+> the architecture comparison and the clean-vs-robust baseline. **CIFAKE**
+> (32×32, Stable Diffusion 1.4) carries the A→B→C ablation and the
+> transformation-flip result — still the clearest demonstration of what
+> augmentation buys. Read both alongside the **cross-domain** result: SID
+> models score near chance on CIFAKE, so high in-dataset accuracy does not
+> transfer. The WildFake benchmark remains held out and unrun.
 
 ### SID_Set results — architecture comparison
 
@@ -512,6 +513,12 @@ AUPRC, Brier score — are in
 | EfficientNet-B0 | `effnet_sid_b` | 99.78% | 99.73% | 99.43% (noise 0.1) | 0.99989 | 1.14 ms |
 | ConvNeXt-Tiny | `convnext_sid_b` | 99.80% | 99.78% | 99.45% (noise 0.1) | 0.99996 | 4.12 ms |
 | DINOv2 ViT-S/14 | `dino_sid_b` | 97.35% | 96.26% | 85.23% (crop 0.8) | 0.99373 | 4.34 ms |
+
+> ⚠️ **Do not read 99.78% in isolation.** These numbers describe SID images
+> only. The same models score **near chance on CIFAKE** — see
+> [Cross-domain generalization](#cross-domain-generalization-what-sid-accuracy-does-not-tell-you)
+> below. Robustness to transforms and generalization to an unseen generator
+> are different problems, and this table measures only the first.
 
 "Mean damaged" and "worst damaged" are computed across the 15 damaged
 conditions, excluding clean; the worst condition for each model is named in
@@ -579,19 +586,83 @@ they do not: 92.14% under colour +0.2 and **85.23% under crop 0.8**, a
 three at 4.34 ms per image. Full reasoning is in
 [results/sid/architecture_selection_notes.txt](results/sid/architecture_selection_notes.txt).
 
-#### The missing piece: there is no SID clean baseline
+#### The SID clean baseline: single transforms are too easy
 
-All three SID models above are **robustness-trained variants**. No
-clean-trained SID model exists, so **the A→B robustness gain that our CIFAKE
-results demonstrate has not been reproduced on SID_Set.**
+A clean-trained SID baseline now exists —
+`experiment_sid_a_clean_best.pt`, SHA-256 `fa2f40fd…` — and has been
+evaluated against the robustness-trained model. The comparison splits by
+damage type.
 
-These tables establish that robustness-trained models hold up under damage
-on high-resolution FLUX images, and that the choice between EfficientNet-B0
-and ConvNeXt-Tiny does not matter much. They do **not** establish that the
-robustness augmentation is what made them hold up — a clean-trained SID
-model might do just as well. Settling that requires training a SID clean
-baseline and running it through this same 16-condition grid. It is the
-single most valuable experiment still outstanding.
+**Under single transforms the two are hard to tell apart.** SID-A reaches
+99.86% clean and bottoms out at 96.35% (JPEG 30); SID-B stays flat above
+99.7% throughout. A 3.5-point worst-case gap is real but modest.
+
+**Under randomly chained damage the gap opens up.** SID-A falls to 83.00%
+mean accuracy while SID-B holds 99.08% — pooled AUROC 0.9873 against
+0.9998.
+
+The reading: on high-resolution images a single transform is not enough to
+separate a clean-trained model from an augmented one. Augmentation earns
+its keep once damage *stacks*, which is how redistribution actually works —
+an image gets resized, re-encoded, screenshotted and re-encoded again.
+
+> **Pending file verification.** The chained-damage figures and SID-A's
+> single-transform numbers come from a teammate's evaluation summary, not
+> from a CSV committed here. `results/sid/` currently holds only the
+> robustness-trained models. Treat these four numbers as provisional until
+> the source files land.
+
+### Cross-domain generalization: what SID accuracy does not tell you
+
+Both EfficientNet-B0 SID models — the clean baseline `sid_a_clean` and the
+robustness-trained `sid_b_robust` — were evaluated on the **CIFAKE
+validation split**: 14,724 images (7,261 real, 7,463 AI), the same
+16-condition grid, threshold 0.5, seed 42. Checkpoint hashes are in
+[results/cross_domain_cifake/robustness_config.json](results/cross_domain_cifake/robustness_config.json).
+
+**They collapse to chance.**
+
+| | SID-A (clean-trained) | SID-B (robustness-trained) |
+|---|---:|---:|
+| Clean CIFAKE accuracy | 51.18% | 49.41% |
+| Clean recall on AI images | 3.91% (292 / 7,463) | 0.21% (16 / 7,463) |
+| Accuracy range over 16 conditions | 49.31% – 51.18% | 49.31% – 50.29% |
+| AUROC range | 0.5079 – 0.6406 | 0.5015 – 0.6505 |
+
+Predicting "real" for every image scores **49.31%** on this split. Both
+models sit within two points of that floor, and the failure is almost
+entirely false negatives: they call nearly everything real. Under noise 0.05
+and noise 0.10 **both detect zero AI images** — not a low count, zero out of
+7,463.
+
+This is not a threshold artifact. AUROC starts around 0.635 on clean images
+and falls to **0.5079** (SID-A) and **0.5015** (SID-B) under blur σ2.0 —
+literally random ranking. A sweep over the clean predictions confirms it:
+the best accuracy any threshold can buy is **59.6%** for SID-A (at ≈0.04)
+and **59.9%** for SID-B (at ≈0.001). Recalibration cannot rescue a model
+whose scores carry almost no signal.
+
+**Transform robustness and cross-generator generalization are separate
+problems.** A detector can be 99.8% accurate under every transform in the
+grid on its own dataset and still be near-useless on images from a generator
+it never saw. Nothing in the SID tables above predicts this result, and
+nothing in our CIFAKE robustness work does either. For the challenge this is
+the more consequential finding: a deployed detector meets generators that
+were not in its training set, and our evidence says robustness training does
+not prepare it for that. Robustness augmentation buys resilience *within* a
+distribution, not across distributions.
+
+Full per-condition metrics are in
+[results/cross_domain_cifake/robustness_metrics.csv](results/cross_domain_cifake/robustness_metrics.csv);
+the paired comparison is in
+[results/cross_domain_cifake/robustness_comparison.csv](results/cross_domain_cifake/robustness_comparison.csv).
+The 167MB per-image prediction dump is deliberately not committed (see
+`.gitignore`).
+
+**Scope.** This evaluation covers the two EfficientNet-B0 SID models only.
+A mixed SID+CIFAKE model is being trained as a response, but it has **not
+been evaluated on SID**, so whether it recovers cross-domain accuracy — and
+what it costs in SID performance — is unknown.
 
 ### Clean validation — Experiments A and B
 
@@ -776,18 +847,24 @@ Every figure below comes from
 [results/error_analysis.md](results/error_analysis.md) and the CSVs in
 `results/`.
 
-**The central claim is demonstrated on CIFAKE alone.** We do now have
-SID_Set results — high-resolution images from the FLUX generator, in the
-tables above — but all three SID models are robustness-trained, with no SID
-clean baseline to compare them against. SID therefore shows that
-robustness-trained models hold up under damage; it does not show that the
-augmentation is what made them hold up. The A→B robustness gain, which is
-our central claim, rests entirely on CIFAKE: 32×32 images, Stable Diffusion
-1.4 as the only generator, one validation split of 14,724 images, one seed.
-The WildFake cross-generator benchmark was never run, so for generators
-neither dataset contains we have **no evidence at all**. Our claim is
-"robust to transformations *within* the datasets we trained on", not "robust
-in general".
+**Nothing we trained generalizes across generators.** This is the most
+serious limitation we have, and we found it ourselves rather than having it
+found for us. Both SID-trained models score at chance on CIFAKE — 51.18% and
+49.41% against a 49.31% all-real floor, with AUROC reaching 0.5015 under
+blur σ2.0 and zero AI images detected under noise. Robustness training does
+not help; a threshold sweep recovers at most ~60%. Whatever our detectors
+learned about FLUX images does not describe Stable Diffusion 1.4 images at
+all. We have no reason to expect a different outcome on a third generator,
+and the WildFake cross-generator benchmark is still unrun, so for generators
+outside our two datasets we have **no evidence at all**.
+
+**The augmentation effect itself is demonstrated on CIFAKE.** The A→B
+transformation-flip result (38,504 → 5,611) comes from CIFAKE: 32×32 images,
+Stable Diffusion 1.4, one validation split of 14,724 images, one seed. A SID
+clean baseline does now exist, and it supports the same direction — but only
+under *chained* damage (83.00% against 99.08%); under single transforms the
+two SID models are nearly indistinguishable. Those SID baseline figures are
+still pending file verification (see the SID section above).
 
 **Consistency training (Experiment C) produced no measurable improvement.**
 Across the 16 single-transform conditions, C beat B in 9 and lost in 7,
