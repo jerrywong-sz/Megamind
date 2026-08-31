@@ -232,8 +232,8 @@ more than one source of images in training.
 The honest limit: this is one direction, one seed, two datasets. We have
 shown that adding a source fixes performance on that source almost for free.
 We have **not** shown that training on two generators generalizes to a
-third. The held-out WildFake benchmark would test exactly that, and it
-remains unrun.
+third — the held-out WildFake benchmark, still unrun, is what would test
+that.
 
 ## A negative result: consistency training did not help
 
@@ -254,14 +254,19 @@ have time to run.
 ## 2. Development tools used
 
 - **VS Code** — primary editor
-- **Google Colab** — GPU training (mixed precision on CUDA)
-- **Kaggle** — CIFAKE dataset access
+- **Google Colab** — GPU training and evaluation (mixed precision on CUDA);
+  the CIFAKE experiments, the cross-domain runs and the mixed-model
+  evaluations ran here
+- **Kaggle** — dataset hosting for both CIFAKE and SID_Set, plus GPU
+  notebooks: the SID architecture comparison (EfficientNet-B0 vs
+  ConvNeXt-Tiny vs DINOv2) and the SID A-vs-B robustness evaluation were
+  both trained and run on Kaggle
 - **Git / GitHub** — version control, pull-request review across five people
 - **Git Bash on Windows** — local shell
-- **pytest** — automated tests (60 tests, all passing, covering the
+- **pytest** — automated tests (69 tests, all passing, covering the
   augmentation and consistency-loss modules, the metrics, the data pipeline,
-  the model builder, the training loop, the evaluation runners, and the
-  inference CLI)
+  the model builder, the training loop, the evaluation runners and their
+  multi-model checkpoint handling, and the inference CLI)
 - **Claude Code** — development assistance
 
 ## 3. Models used
@@ -287,6 +292,20 @@ each with the same single-logit head: **ConvNeXt-Tiny** (torchvision,
 embedding output). DINOv2 was dropped on the results above. Every model is
 orders of magnitude below the 2B parameter limit, and all inference is
 local.
+
+### The checkpoint we recommend
+
+**`effnet_b0_sid_cifake_experiment_b_best.pt`** — EfficientNet-B0 trained on
+SID_Set and CIFAKE together, SHA-256 `9159a9d4ceb7fccd…`.
+
+It is deliberately **not** the best checkpoint on either dataset taken
+alone: the SID-only model beats it by 0.47pp on SID (99.78% against 99.31%).
+But it is the only checkpoint that does not collapse on a dataset it was not
+trained on — 99.31% on SID and 97.19% on CIFAKE, against the SID-only
+model's 99.78% and **49.41%**. A submission is scored on images whose
+generator is not known in advance, so the model that holds up across sources
+is the right trade, and half a point on one dataset is a small price for
+forty-eight on another.
 
 ## 4. Libraries and frameworks
 
@@ -377,11 +396,11 @@ We would rather state these than have a judge find them.
    for `BCEWithLogitsLoss`, so a 3-class row would need explicit handling. The
    quarantine works; the analysis it enables is future work.
 
-**With more time, in priority order:** run the held-out WildFake
-benchmark for a real cross-generator number, which is our largest unknown;
-inspect the 40 persistent failures for label noise; tune the decision threshold
-to claw back the false-positive rate; and re-run the A/B/C ablation across
-multiple seeds.
+**With more time, in priority order:** run WildFake against the mixed model,
+which would show whether source diversity generalizes to a *third* generator
+or only fixes the two it saw; inspect the 40 persistent failures for label
+noise; tune the decision threshold to claw back the false-positive rate; and
+re-run the A/B/C ablation across multiple seeds.
 
 ## Reproducibility
 
