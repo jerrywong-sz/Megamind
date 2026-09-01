@@ -219,7 +219,11 @@ __marimo__/
 venv/
 data/
 *.pt
+*.pth
 checkpoints/
+
+# Scratch / working files that are not part of the deliverable.
+scratch/
 
 # Ignore downloaded hackathon data
 images/

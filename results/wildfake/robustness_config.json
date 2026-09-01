@@ -1,0 +1,124 @@
+{
+  "mode": "robustness",
+  "evaluation_title": "Single-transform robustness evaluation — Old SID B - SID-only robustness training vs New Mixed B - SID and CIFAKE robustness training",
+  "data_root": "/content/wildfake-final-test-set/WILDFAKE_Standardized",
+  "manifest_path": "/content/wildfake-final-test-set/WILDFAKE_Standardized/wildfake_test_manifest.csv",
+  "split": "test",
+  "threshold": 0.5,
+  "batch_size": 64,
+  "num_workers": 0,
+  "device": "cuda",
+  "seed": 42,
+  "preprocessing": "condition before src.data.get_eval_transform",
+  "num_models": 2,
+  "num_conditions": 16,
+  "num_images_per_model_condition": 7438,
+  "conditions": [
+    {
+      "transform": "clean",
+      "severity": null
+    },
+    {
+      "transform": "jpeg",
+      "severity": 90
+    },
+    {
+      "transform": "jpeg",
+      "severity": 70
+    },
+    {
+      "transform": "jpeg",
+      "severity": 50
+    },
+    {
+      "transform": "jpeg",
+      "severity": 30
+    },
+    {
+      "transform": "blur",
+      "severity": 0.5
+    },
+    {
+      "transform": "blur",
+      "severity": 1.0
+    },
+    {
+      "transform": "blur",
+      "severity": 2.0
+    },
+    {
+      "transform": "resize",
+      "severity": 0.5
+    },
+    {
+      "transform": "resize",
+      "severity": 0.25
+    },
+    {
+      "transform": "noise",
+      "severity": 0.02
+    },
+    {
+      "transform": "noise",
+      "severity": 0.05
+    },
+    {
+      "transform": "noise",
+      "severity": 0.1
+    },
+    {
+      "transform": "colour",
+      "severity": -0.2
+    },
+    {
+      "transform": "colour",
+      "severity": 0.2
+    },
+    {
+      "transform": "crop",
+      "severity": 0.8
+    }
+  ],
+  "models": [
+    {
+      "model_id": "old_sid_b",
+      "model_title": "Old SID B - SID-only robustness training",
+      "checkpoint_path": "/content/experiment_sid_b_robust_best.pt",
+      "architecture_override": "efficientnet_b0",
+      "path": "/content/experiment_sid_b_robust_best.pt",
+      "sha256": "918083148a04149dd2209ae21810aa4279583e57f687b4b63d9300a5aae64d55"
+    },
+    {
+      "model_id": "mixed_sid_cifake_b",
+      "model_title": "New Mixed B - SID and CIFAKE robustness training",
+      "checkpoint_path": "/content/effnet_b0_sid_cifake_experiment_b_best.pt",
+      "architecture_override": "efficientnet_b0",
+      "path": "/content/effnet_b0_sid_cifake_experiment_b_best.pt",
+      "sha256": "9159a9d4ceb7fccd3eee24c3ddf9600c79c8abf1444cb0646b93ac66fd3b5c44"
+    }
+  ],
+  "checkpoints": [
+    {
+      "model_id": "old_sid_b",
+      "model_title": "Old SID B - SID-only robustness training",
+      "checkpoint_path": "/content/experiment_sid_b_robust_best.pt",
+      "architecture_override": "efficientnet_b0",
+      "path": "/content/experiment_sid_b_robust_best.pt",
+      "sha256": "918083148a04149dd2209ae21810aa4279583e57f687b4b63d9300a5aae64d55"
+    },
+    {
+      "model_id": "mixed_sid_cifake_b",
+      "model_title": "New Mixed B - SID and CIFAKE robustness training",
+      "checkpoint_path": "/content/effnet_b0_sid_cifake_experiment_b_best.pt",
+      "architecture_override": "efficientnet_b0",
+      "path": "/content/effnet_b0_sid_cifake_experiment_b_best.pt",
+      "sha256": "9159a9d4ceb7fccd3eee24c3ddf9600c79c8abf1444cb0646b93ac66fd3b5c44"
+    }
+  ],
+  "output_files": {
+    "predictions": "robustness_predictions.csv",
+    "metrics": "robustness_metrics.csv",
+    "comparison": "robustness_comparison.csv",
+    "config": "robustness_config.json"
+  }
+}

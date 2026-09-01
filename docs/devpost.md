@@ -7,13 +7,17 @@ questions: does it still work after the image has been through a real upload
 pipeline, and does it still work on a generator it has never seen?
 
 The first question has a good answer — robustness augmentation removes 85.4%
-of the errors that transforms introduce. The second nearly did not. Our
-best detector, 99.8% accurate on its own dataset, turned out to score **at
-chance** on images from a different generator. Our evidence pointed strongly
-to training-distribution shift rather than backbone choice; adding a second
-training source removed the observed SID↔CIFAKE collapse for 0.47 accuracy
-points, though generalization to a third unseen generator remains unproven.
-That arc is
+of the errors that transforms introduce. The second is harder, and the honest
+answer is partial. Our best detector, 99.8% accurate on its own dataset,
+scored **at chance** on images from a different generator. The evidence
+pointed to training-distribution shift rather than backbone choice, and
+adding a second training source removed that collapse for 0.47 accuracy
+points. But on a **third generator neither model had seen** — the held-out
+WildFake benchmark — both models transfer only partially, missing about 40%
+of AI images, and the mixed model becomes the *less* stable of the two under
+heavy degradation. Source diversity fixes the sources you mix in; it does not
+buy general cross-generator robustness. That arc, including the part that did
+not work, is
 [the most important thing in this submission](#the-finding-that-matters-most-cross-domain-collapse-and-the-fix).
 
 ---
@@ -250,13 +254,50 @@ SID-only model's retention figures were an artifact of a constant classifier,
 both models here genuinely discriminate (pooled recall 98.23% and 98.17%), so
 the retention and drop columns mean what they appear to mean.
 
-### What the three results say together
+### The third generator: what WildFake shows
 
-| | SID | CIFAKE |
-|---|---:|---:|
-| SID-only B (EfficientNet-B0) | 99.78% | 49.41% |
-| SID-only ConvNeXt-Tiny | 99.80% | 49.38% |
-| **Mixed SID+CIFAKE B** | **99.31%** | **97.19%** |
+We then ran the held-out benchmark — **WildFake**, COCO val2017 real
+photographs plus DALL·E Advanced images, 7,438 test images per condition,
+perfectly balanced so the all-real floor is 50.00%. Neither model has ever
+seen it. This is the real unseen-generator test.
+
+| | Clean acc. | Clean recall | blur σ2.0 | resize 0.25× | noise σ0.10 |
+|---|---:|---:|---:|---:|---:|
+| SID-only B | 78.00% | 56.63% | 74.93% | 74.98% | 73.06% |
+| **Mixed SID+CIFAKE B** | **79.85%** | **61.82%** | 54.42% | 48.99% | **32.37%** |
+
+**Both models transfer partially.** 78–80% clean is real transfer — far above
+the 50% floor, far below the 97–99% they reach on familiar data. But recall is
+56.63% and 61.82%: **both miss roughly 40% of the DALL·E images even on clean
+inputs.**
+
+**The mixed model is modestly better on clean and mildly damaged images** —
++1.84pp accuracy, +5.19pp recall, ahead on 11 of 16 conditions.
+
+**And dramatically worse under heavy damage.** Under noise σ0.10 it falls to
+32.37%, *below* the all-real floor, with AUROC **0.1446** — below 0.5 means
+the ranking is inverted, with AI images sorted below real ones. The same
+inversion appears at resize 0.25× (0.4887). The SID-only model stays between
+72.34% and 78.00% across all 16 conditions with AUROC never under 0.9186.
+
+**The collapse is a false-positive collapse**, which matters more than the
+accuracy drop alone suggests. The mixed model's false-positive rate reaches
+**48.86%** (blur σ2.0), **59.48%** (resize 0.25×) and **85.37%** (noise
+σ0.10) — at the last, flagging 3,175 of 3,719 genuine photographs as
+AI-generated. Its recall stays *higher* than the SID-only model's throughout;
+it is not detecting less, it is over-flagging. The two models fail in
+opposite directions, and the mixed model's direction is the one the challenge
+warns against. A fixed five-chain grid on the same split reproduces the
+pattern: mixed leads on mild chains, collapses on the heavy downscale one
+(58.91% vs 72.90%, false-positive rate 34.96%).
+
+### What the four results say together
+
+| | SID (trained) | CIFAKE (trained, mixed only) | WildFake (unseen) |
+|---|---:|---:|---:|
+| SID-only B (EfficientNet-B0) | 99.78% | 49.41% | 78.00% |
+| SID-only ConvNeXt-Tiny | 99.80% | 49.38% | — |
+| **Mixed SID+CIFAKE B** | **99.31%** | **97.19%** | **79.85%** |
 
 **Backbone choice was not the dominant factor.** Two backbones from
 different families — 4.0M and 27.8M parameters — trained on the same data
@@ -266,18 +307,22 @@ so the evidence points much more strongly to the training distribution than
 to architecture or capacity. Two architectures is strong evidence, not
 proof; a third family might behave differently, and we did not test one.
 
-**Training-source diversity was far more influential than scaling the
-backbone in our experiments.** Adding a second training source costs **0.47
-points** on the original dataset and gains **47.78 points** on the
-previously unseen one — roughly a hundred points gained for each one given
-up. Neither a larger backbone nor heavier augmentation moved this failure
-mode at all; a second source of images did.
+**Within the datasets trained on, mixing is close to free and the gain is
+enormous** — 0.47 points given up on SID, 47.78 points gained on CIFAKE.
 
-The honest limit: this is one direction, one seed, two datasets. We have
-shown that adding a source fixes performance on that source almost for free.
-We have **not** shown that training on two generators generalizes to a
-third — the held-out WildFake benchmark, still unrun, is what would test
-that.
+**On a third, unseen generator, mixing buys much less.** Both models retain
+partial ability, and the mixed model's advantage shrinks from +47.78pp to
+**+1.84pp**.
+
+**And under damage on that third generator it costs stability.** The mixed
+model is markedly less robust there than the model trained on one source.
+
+**So source diversity is not a general solution to cross-generator
+robustness.** It reliably fixes the sources you mix in, at very low cost to
+the ones already there; it transfers only weakly to sources you leave out;
+and on those it may trade robustness away. The lever is real and worth
+pulling — but it acts on the training distribution, not on generalization in
+general.
 
 ## A negative result: consistency training did not help
 
@@ -347,23 +392,36 @@ local.
 
 ### The checkpoint we recommend
 
-**`effnet_b0_sid_cifake_experiment_b_best.pt`** — EfficientNet-B0 trained on
-SID_Set and CIFAKE together, SHA-256 `9159a9d4ceb7fccd…`.
+**`best_ultimate_ema_checkpoint.pth`** — the Ultimate hybrid, architecture
+`hybrid_effnet_dinov2`, selected on the WildFake unseen-generator
+evaluation. It fuses EfficientNet-B0 features with DINOv2 ViT-S/14
+embeddings into a 1664-d vector (LayerNorm → 512 → 128 → 1) and was trained
+with a domain-adversarial objective. The checkpoint records its own
+architecture, so no `--architecture` flag is needed. Download:
+<https://drive.google.com/file/d/1_cW9gus31EVLPQYjW9bkCR6jkhVaWM78/view>
 
-Checkpoints are gitignored for size and hosted on Google Drive — download it
-at <https://drive.google.com/file/d/1bz3KfWIPr422c7rGM9hYH3zs6wSr7pc7/view>
-and verify against the full SHA-256 in the repo's README; without
-`--checkpoint`, `predict.py` falls back to random output with a stderr
-warning.
+**It requires internet access on its first run.** Building the hybrid calls
+`torch.hub.load("facebookresearch/dinov2", ...)`, which fetches DINOv2's
+source from github.com/facebookresearch/dinov2 into `~/.cache/torch/hub/`.
+Without internet the first run fails; after one online run the cache is
+primed and it works offline. All model weights come from the checkpoint —
+only the source is fetched — but the fetch cannot be skipped.
 
-It is deliberately **not** the best checkpoint on either dataset taken
-alone: the SID-only model beats it by 0.47pp on SID (99.78% against 99.31%).
-But it is the only checkpoint that does not collapse on a dataset it was not
-trained on — 99.31% on SID and 97.19% on CIFAKE, against the SID-only
-model's 99.78% and **49.41%**. A submission is scored on images whose
-generator is not known in advance, so the model that holds up across sources
-is the right trade, and half a point on one dataset is a small price for
-forty-eight on another.
+**Offline fallback: `effnet_b0_sid_cifake_experiment_b_best.pt`** —
+EfficientNet-B0 trained on SID_Set and CIFAKE together, SHA-256
+`9159a9d4ceb7fccd…`, ~16 MB, download
+<https://drive.google.com/file/d/1bz3KfWIPr422c7rGM9hYH3zs6wSr7pc7/view>.
+**No network dependency of any kind**, and fully supported. It is the
+checkpoint behind every number in this write-up: not the best on either
+dataset alone — the SID-only model beats it by 0.47pp on SID — but the only
+one that does not collapse on a dataset it was not trained on, at 99.31% on
+SID and 97.19% on CIFAKE against the SID-only model's 99.78% and **49.41%**.
+Use it if the evaluation machine has no internet access.
+
+**Scope note:** no evaluation of the hybrid is committed to the repository —
+everything under `results/` covers `efficientnet_b0`, `convnext_tiny` and
+`dinov2_vits14`. Every figure in this document, WildFake included, describes
+the EfficientNet-B0 models, not the hybrid.
 
 ## 4. Libraries and frameworks
 
@@ -411,9 +469,10 @@ the exact challenge parameter values are reproduced rather than approximated.
   tampered image is mostly authentic pixels and training on it as "AI" risks
   pushing the model toward false positives on genuine photographs.
 - **WildFake** (COCO val2017 real images + DALL·E Advanced generated images) —
-  **held out and untouched**, per the challenge rules, as a demonstration
-  benchmark for cross-generator generalization. It has not been trained on and
-  has not been evaluated yet.
+  **held out from all training**, per the challenge rules, and used only at
+  the end as the cross-generator demonstration benchmark. Neither model was
+  ever trained on it. Evaluated on the test split, 7,438 images per condition
+  (3,719 real / 3,719 AI); results above.
 
 To prevent the model learning file-format signatures rather than image content,
 every image from every dataset is re-encoded to standard JPEG (quality 95, alpha
@@ -423,14 +482,17 @@ stripped) before training, and SHA-256 de-duplicated.
 
 We would rather state these than have a judge find them.
 
-1. **Generalization to an *unseen* generator remains unproven.** Training on
-   a generator fixes that generator (SID-only models score 49.4% on CIFAKE;
-   the mixed model scores 97.19%). What we have not shown is that training on
-   two generators helps on a third. The held-out WildFake benchmark would
-   test this and is still unrun, so for a generator absent from training we
-   have **no positive evidence** — only the demonstrated failure mode, which
-   was severe: at chance, AUROC 0.5015, zero AI images detected under noise,
-   and no threshold recovering more than ~60%.
+1. **On an unseen generator both models miss ~40% of AI images, and the
+   mixed model is unstable under damage.** On the held-out WildFake benchmark
+   clean accuracy is 78.00% (SID-only) and 79.85% (mixed) — real transfer,
+   well above the 50.00% floor — but recall is only **56.63% and 61.82%**.
+   Worse, the model we recommend is the less stable of the two there: under
+   noise σ0.10 it falls to **32.37%**, below the all-real floor, with AUROC
+   **0.1446** (inverted ranking) and an **85.37%** false-positive rate,
+   against the SID-only model's 73.06% and AUROC 0.9811. Source diversity
+   fixed the sources we mixed and did not confer general cross-generator
+   robustness. One unseen generator, one seed — but a direct counter-example
+   to the assumption that mixing generalizes.
 2. **The augmentation effect is broad on CIFAKE but narrow on SID.** The A→B
    flip result comes from CIFAKE alone: 32×32 images, one generator (SD 1.4),
    one validation split, one seed. On SID the two models are within ±1pp on
@@ -459,11 +521,13 @@ We would rather state these than have a judge find them.
    for `BCEWithLogitsLoss`, so a 3-class row would need explicit handling. The
    quarantine works; the analysis it enables is future work.
 
-**With more time, in priority order:** run WildFake against the mixed model,
-which would show whether source diversity generalizes to a *third* generator
-or only fixes the two it saw; inspect the 40 persistent failures for label
-noise; tune the decision threshold to claw back the false-positive rate; and
-re-run the A/B/C ablation across multiple seeds.
+**With more time, in priority order:** diagnose why the mixed model inverts
+its ranking under heavy noise and downscaling on unseen data — that failure
+is specific, reproducible and currently unexplained, and it decides which
+checkpoint we should ship; add a third training source and re-run WildFake to
+test whether the diversity effect compounds or keeps trading robustness away;
+inspect the 40 persistent CIFAKE failures for label noise; and re-run the
+A/B/C ablation across multiple seeds.
 
 ## Reproducibility
 

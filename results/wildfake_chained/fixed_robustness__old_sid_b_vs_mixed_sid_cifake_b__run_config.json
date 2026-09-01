@@ -1,0 +1,207 @@
+{
+  "evaluation_title": "Fixed robustness evaluation — Old SID B - SID-only robustness training vs New Mixed B - SID and CIFAKE robustness training",
+  "evaluation_type": "fixed_conditions_only",
+  "random_condition_sampling": false,
+  "data_root": "/content/wildfake-final-test-set/WILDFAKE_Standardized",
+  "manifest_path": "/content/wildfake-final-test-set/WILDFAKE_Standardized/wildfake_test_manifest.csv",
+  "split": "test",
+  "threshold": 0.5,
+  "batch_size": 64,
+  "num_workers": 0,
+  "device": "cuda",
+  "seed": 42,
+  "label_convention": {
+    "0": "real",
+    "1": "AI-generated"
+  },
+  "preprocessing": "fixed condition before src.data.get_eval_transform",
+  "num_conditions": 6,
+  "num_models": 2,
+  "num_images_per_model_condition": 7438,
+  "models": [
+    {
+      "model_id": "old_sid_b",
+      "model_title": "Old SID B - SID-only robustness training",
+      "architecture_override": "efficientnet_b0",
+      "path": "/content/experiment_sid_b_robust_best.pt",
+      "sha256": "918083148a04149dd2209ae21810aa4279583e57f687b4b63d9300a5aae64d55"
+    },
+    {
+      "model_id": "mixed_sid_cifake_b",
+      "model_title": "New Mixed B - SID and CIFAKE robustness training",
+      "architecture_override": "efficientnet_b0",
+      "path": "/content/effnet_b0_sid_cifake_experiment_b_best.pt",
+      "sha256": "9159a9d4ceb7fccd3eee24c3ddf9600c79c8abf1444cb0646b93ac66fd3b5c44"
+    }
+  ],
+  "conditions": [
+    {
+      "condition_id": "clean",
+      "condition_title": "Clean image — no robustness transform",
+      "condition_kind": "clean",
+      "num_transform_steps": 0,
+      "transform_chain": "none",
+      "transform_parameters_json": "[]",
+      "possible_in_b_c_training_sampler": true,
+      "steps": []
+    },
+    {
+      "condition_id": "fixed_resize_half_then_jpeg70",
+      "condition_title": "Fixed chain — Resize 0.50× → JPEG quality 70",
+      "condition_kind": "fixed_chain",
+      "num_transform_steps": 2,
+      "transform_chain": "resize(scale=0.5) -> jpeg(quality=70)",
+      "transform_parameters_json": "[{\"order\":1,\"transform\":\"resize\",\"parameter_name\":\"scale\",\"parameter_value\":0.5},{\"order\":2,\"transform\":\"jpeg\",\"parameter_name\":\"quality\",\"parameter_value\":70}]",
+      "possible_in_b_c_training_sampler": true,
+      "steps": [
+        {
+          "order": 1,
+          "transform": "resize",
+          "parameter_name": "scale",
+          "parameter_value": 0.5
+        },
+        {
+          "order": 2,
+          "transform": "jpeg",
+          "parameter_name": "quality",
+          "parameter_value": 70
+        }
+      ]
+    },
+    {
+      "condition_id": "fixed_resize_quarter_then_jpeg50",
+      "condition_title": "Fixed chain — Resize 0.25× → JPEG quality 50",
+      "condition_kind": "fixed_chain",
+      "num_transform_steps": 2,
+      "transform_chain": "resize(scale=0.25) -> jpeg(quality=50)",
+      "transform_parameters_json": "[{\"order\":1,\"transform\":\"resize\",\"parameter_name\":\"scale\",\"parameter_value\":0.25},{\"order\":2,\"transform\":\"jpeg\",\"parameter_name\":\"quality\",\"parameter_value\":50}]",
+      "possible_in_b_c_training_sampler": true,
+      "steps": [
+        {
+          "order": 1,
+          "transform": "resize",
+          "parameter_name": "scale",
+          "parameter_value": 0.25
+        },
+        {
+          "order": 2,
+          "transform": "jpeg",
+          "parameter_name": "quality",
+          "parameter_value": 50
+        }
+      ]
+    },
+    {
+      "condition_id": "fixed_crop_colour_jpeg",
+      "condition_title": "Fixed chain — Crop 0.80 → Colour +0.20 → JPEG quality 50",
+      "condition_kind": "fixed_chain",
+      "num_transform_steps": 3,
+      "transform_chain": "crop(fraction=0.8) -> colour(strength=0.2) -> jpeg(quality=50)",
+      "transform_parameters_json": "[{\"order\":1,\"transform\":\"crop\",\"parameter_name\":\"fraction\",\"parameter_value\":0.8},{\"order\":2,\"transform\":\"colour\",\"parameter_name\":\"strength\",\"parameter_value\":0.2},{\"order\":3,\"transform\":\"jpeg\",\"parameter_name\":\"quality\",\"parameter_value\":50}]",
+      "possible_in_b_c_training_sampler": true,
+      "steps": [
+        {
+          "order": 1,
+          "transform": "crop",
+          "parameter_name": "fraction",
+          "parameter_value": 0.8
+        },
+        {
+          "order": 2,
+          "transform": "colour",
+          "parameter_name": "strength",
+          "parameter_value": 0.2
+        },
+        {
+          "order": 3,
+          "transform": "jpeg",
+          "parameter_name": "quality",
+          "parameter_value": 50
+        }
+      ]
+    },
+    {
+      "condition_id": "fixed_screenshot_resample",
+      "condition_title": "Fixed chain — Resize 0.50× → Blur 0.50 → JPEG quality 70",
+      "condition_kind": "fixed_chain",
+      "num_transform_steps": 3,
+      "transform_chain": "resize(scale=0.5) -> blur(sigma=0.5) -> jpeg(quality=70)",
+      "transform_parameters_json": "[{\"order\":1,\"transform\":\"resize\",\"parameter_name\":\"scale\",\"parameter_value\":0.5},{\"order\":2,\"transform\":\"blur\",\"parameter_name\":\"sigma\",\"parameter_value\":0.5},{\"order\":3,\"transform\":\"jpeg\",\"parameter_name\":\"quality\",\"parameter_value\":70}]",
+      "possible_in_b_c_training_sampler": true,
+      "steps": [
+        {
+          "order": 1,
+          "transform": "resize",
+          "parameter_name": "scale",
+          "parameter_value": 0.5
+        },
+        {
+          "order": 2,
+          "transform": "blur",
+          "parameter_name": "sigma",
+          "parameter_value": 0.5
+        },
+        {
+          "order": 3,
+          "transform": "jpeg",
+          "parameter_name": "quality",
+          "parameter_value": 70
+        }
+      ]
+    },
+    {
+      "condition_id": "fixed_repeated_jpeg",
+      "condition_title": "Fixed chain — JPEG quality 90 → JPEG 70 → JPEG 50",
+      "condition_kind": "fixed_chain",
+      "num_transform_steps": 3,
+      "transform_chain": "jpeg(quality=90) -> jpeg(quality=70) -> jpeg(quality=50)",
+      "transform_parameters_json": "[{\"order\":1,\"transform\":\"jpeg\",\"parameter_name\":\"quality\",\"parameter_value\":90},{\"order\":2,\"transform\":\"jpeg\",\"parameter_name\":\"quality\",\"parameter_value\":70},{\"order\":3,\"transform\":\"jpeg\",\"parameter_name\":\"quality\",\"parameter_value\":50}]",
+      "possible_in_b_c_training_sampler": false,
+      "steps": [
+        {
+          "order": 1,
+          "transform": "jpeg",
+          "parameter_name": "quality",
+          "parameter_value": 90
+        },
+        {
+          "order": 2,
+          "transform": "jpeg",
+          "parameter_name": "quality",
+          "parameter_value": 70
+        },
+        {
+          "order": 3,
+          "transform": "jpeg",
+          "parameter_name": "quality",
+          "parameter_value": 50
+        }
+      ]
+    }
+  ],
+  "reported_metrics": [
+    "num_samples",
+    "threshold",
+    "true_negatives",
+    "false_positives",
+    "false_negatives",
+    "true_positives",
+    "accuracy",
+    "balanced_accuracy",
+    "precision",
+    "recall",
+    "f1",
+    "auroc",
+    "auprc",
+    "false_positive_rate",
+    "false_negative_rate",
+    "brier_score"
+  ],
+  "output_files": {
+    "predictions": "fixed_robustness__old_sid_b_vs_mixed_sid_cifake_b__per_image_predictions.csv",
+    "metrics": "fixed_robustness__old_sid_b_vs_mixed_sid_cifake_b__full_metrics.csv",
+    "summary": "fixed_robustness__old_sid_b_vs_mixed_sid_cifake_b__combined_summary.csv",
+    "config": "fixed_robustness__old_sid_b_vs_mixed_sid_cifake_b__run_config.json",
+    "old_sid_b_vs_mixed_sid_cifake_b": "fixed_robustness__old_sid_b_vs_mixed_sid_cifake_b.csv"
+  }
+}
