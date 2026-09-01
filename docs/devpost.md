@@ -1,6 +1,6 @@
 # Robust AI-Generated Image Detection — TikTok TechJam Track 5
 
-**Demo video:** TODO — paste YouTube link here.
+**Demo video:** https://youtu.be/FO-r_WiiEUM
 
 A binary detector for AI-generated images, built and measured around two
 questions: does it still work after the image has been through a real upload
@@ -14,7 +14,7 @@ pointed to training-distribution shift rather than backbone choice, and
 adding a second training source removed that collapse for 0.47 accuracy
 points. But on a **third generator neither model had seen** — the held-out
 WildFake benchmark — both models transfer only partially, missing about 40%
-of AI images, and the mixed model becomes the *less* stable of the two under
+of AI images, and the mixed model becomes the _less_ stable of the two under
 heavy degradation. Source diversity fixes the sources you mix in; it does not
 buy general cross-generator robustness. That arc, including the part that did
 not work, is
@@ -33,12 +33,12 @@ Our headline measurement is **transformation flips**: images the model
 classifies correctly when clean and incorrectly after a transform. Across 15
 transformed conditions on 14,724 held-out CIFAKE validation images:
 
-| | Clean baseline (A) | Robustness-augmented (B) |
-|---|---:|---:|
-| **Transformation flips** | **38,504** | **5,611** |
-| Total misclassification events | 41,024 | 9,065 |
-| High-confidence mistakes | 22,027 | 972 |
-| Worst-condition accuracy | 53.67% | 91.37% |
+|                                | Clean baseline (A) | Robustness-augmented (B) |
+| ------------------------------ | -----------------: | -----------------------: |
+| **Transformation flips**       |         **38,504** |                **5,611** |
+| Total misclassification events |             41,024 |                    9,065 |
+| High-confidence mistakes       |             22,027 |                      972 |
+| Worst-condition accuracy       |             53.67% |                   91.37% |
 
 **Augmentation removes 85.4% of the baseline's flips.** The baseline does not
 degrade gracefully — it collapses. Under Gaussian noise σ=0.10 its accuracy
@@ -47,7 +47,7 @@ binary task. Blur σ=2.0 takes it to 57.75% and resize 0.25× to 60.74%. The
 augmented model stays at 94.91%, 91.77% and 91.37% on those same conditions, and
 never drops below 91.37% on any of the 16 conditions.
 
-The gap in *confidence* is larger than the gap in accuracy. Counting only errors
+The gap in _confidence_ is larger than the gap in accuracy. Counting only errors
 where the model was emphatic and wrong (an AI image scored ≤0.05, or a real
 image scored ≥0.95), the baseline makes 22,027 and the augmented model 972 — a
 23× difference. Calibration follows: in the augmented model's ≥0.99 score band,
@@ -125,11 +125,11 @@ different generator (FLUX). Three robustness-trained architectures were run
 across the same 16-condition grid on the SID validation split: 5,099 images
 per condition, threshold 0.5, seed 42, checkpoint SHA-256 hashes recorded.
 
-| Model | Clean acc. | Mean damaged acc. | Worst damaged acc. | Latency |
-|---|---:|---:|---:|---:|
-| EfficientNet-B0 | 99.78% | 99.73% | 99.43% (noise 0.10) | 1.14 ms |
-| ConvNeXt-Tiny | 99.80% | 99.78% | 99.45% (noise 0.10) | 4.12 ms |
-| DINOv2 ViT-S/14 | 97.35% | 96.26% | 85.23% (crop 0.80) | 4.34 ms |
+| Model           | Clean acc. | Mean damaged acc. |  Worst damaged acc. | Latency |
+| --------------- | ---------: | ----------------: | ------------------: | ------: |
+| EfficientNet-B0 |     99.78% |            99.73% | 99.43% (noise 0.10) | 1.14 ms |
+| ConvNeXt-Tiny   |     99.80% |            99.78% | 99.45% (noise 0.10) | 4.12 ms |
+| DINOv2 ViT-S/14 |     97.35% |            96.26% |  85.23% (crop 0.80) | 4.34 ms |
 
 **ConvNeXt-Tiny came out marginally ahead and we did not choose it.** Its lead
 is 0.05 percentage points of mean damaged accuracy, for **3.6× the inference
@@ -149,14 +149,14 @@ under chained damage.** A clean-trained SID baseline
 (`experiment_sid_a_clean_best.pt`) has been evaluated against the
 robustness-trained model on 5,099 SID validation images per condition.
 
-Under *single* transforms the two are within ±1pp on 13 of 16 conditions.
+Under _single_ transforms the two are within ±1pp on 13 of 16 conditions.
 The entire gap sits in three: **noise σ0.10 (56.85% vs 99.43%)**, noise
 σ0.05 (79.15% vs 99.63%) and JPEG 30 (96.35% vs 99.75%). At σ0.10 the
 clean-trained model's recall falls to 12.11% — it misses seven of every
 eight AI images — though its AUROC is still 0.9972, so the ranking survives
 and only the decision boundary has moved.
 
-Under *randomly chained* damage (3 transforms per image, 5 trials, 25,495
+Under _randomly chained_ damage (3 transforms per image, 5 trials, 25,495
 pooled predictions) the separation is unambiguous: **82.997% against
 99.078%** pooled accuracy, false-negative rate **34.60% against 1.72%**,
 clean-correct retention **83.04% against 99.14%**, pooled AUROC 0.9873
@@ -172,12 +172,12 @@ which is how real redistribution works — shows it.
 SID models and ran them over the CIFAKE validation split — 14,724 images
 (7,261 real, 7,463 AI), the same 16 conditions, threshold 0.5, seed 42.
 
-| | SID-A (clean-trained) | SID-B (robustness-trained) |
-|---|---:|---:|
-| Clean CIFAKE accuracy | 51.18% | 49.41% |
-| Clean recall on AI images | 3.91% (292 / 7,463) | 0.21% (16 / 7,463) |
-| Accuracy range, 16 conditions | 49.31% – 51.18% | 49.31% – 50.29% |
-| AUROC range | 0.5079 – 0.6406 | 0.5015 – 0.6505 |
+|                               | SID-A (clean-trained) | SID-B (robustness-trained) |
+| ----------------------------- | --------------------: | -------------------------: |
+| Clean CIFAKE accuracy         |                51.18% |                     49.41% |
+| Clean recall on AI images     |   3.91% (292 / 7,463) |         0.21% (16 / 7,463) |
+| Accuracy range, 16 conditions |       49.31% – 51.18% |            49.31% – 50.29% |
+| AUROC range                   |       0.5079 – 0.6406 |            0.5015 – 0.6505 |
 
 Predicting "real" for everything scores **49.31%** here. Both models sit
 within two points of that floor, failing almost entirely by false negative —
@@ -195,7 +195,7 @@ on its own dataset and still be useless on an unseen generator. Nothing in
 the SID results predicts this, and nothing in our CIFAKE robustness work
 does either. For this challenge that is the consequential finding: a
 deployed detector meets generators absent from its training set, and our
-evidence says robustness augmentation buys resilience *within* a
+evidence says robustness augmentation buys resilience _within_ a
 distribution, not across distributions.
 
 **It is not an architecture problem.** We ran the same CIFAKE evaluation on
@@ -218,14 +218,14 @@ together recovers almost all of the loss on CIFAKE: clean accuracy 49.41% →
 0.50–0.65 band to **0.958–0.996**, recall on AI images 0.21% → 98.08%. Its
 worst condition is blur σ2.0 at 87.75%.
 
-Under *randomly chained* damage on CIFAKE (3 transforms per image, 5 trials,
+Under _randomly chained_ damage on CIFAKE (3 transforms per image, 5 trials,
 73,620 pooled predictions) the mixed model holds **84.33%** pooled accuracy
 with AUROC **0.942** and a 25.79% false-negative rate, against the SID-only
 model's 49.66%, AUROC **0.515** and a **97.74%** false-negative rate.
 
 **One caveat about how to read that table.** The SID-only model's
-clean-correct retention (98.22%) is *higher* than the mixed model's
-(85.41%), and its accuracy under damage is marginally *higher* than its
+clean-correct retention (98.22%) is _higher_ than the mixed model's
+(85.41%), and its accuracy under damage is marginally _higher_ than its
 clean accuracy — a negative drop. Neither is robustness. It predicts "real"
 for essentially every image (recall on AI images 2.26%, false-negative rate
 97.74%), so damage cannot change an answer that never depended on the input:
@@ -242,7 +242,7 @@ the same 16 conditions. It gives up **0.47pp** on clean images (99.78% →
 σ0.10). No condition costs more than 0.92pp, and AUROC is essentially
 unchanged: 0.9998 against 0.9999.
 
-Under *chained* damage on SID (5 trials, 25,495 pooled predictions) the gap is
+Under _chained_ damage on SID (5 trials, 25,495 pooled predictions) the gap is
 the same size: **99.03% against 98.63%**, a 0.40pp difference, with AUROC
 0.9997 against 0.9985 and near-identical false-negative rates (1.77% vs
 1.83%). The cost of adding CIFAKE to training is therefore uniformly small
@@ -261,10 +261,10 @@ photographs plus DALL·E Advanced images, 7,438 test images per condition,
 perfectly balanced so the all-real floor is 50.00%. Neither model has ever
 seen it. This is the real unseen-generator test.
 
-| | Clean acc. | Clean recall | blur σ2.0 | resize 0.25× | noise σ0.10 |
-|---|---:|---:|---:|---:|---:|
-| SID-only B | 78.00% | 56.63% | 74.93% | 74.98% | 73.06% |
-| **Mixed SID+CIFAKE B** | **79.85%** | **61.82%** | 54.42% | 48.99% | **32.37%** |
+|                        | Clean acc. | Clean recall | blur σ2.0 | resize 0.25× | noise σ0.10 |
+| ---------------------- | ---------: | -----------: | --------: | -----------: | ----------: |
+| SID-only B             |     78.00% |       56.63% |    74.93% |       74.98% |      73.06% |
+| **Mixed SID+CIFAKE B** | **79.85%** |   **61.82%** |    54.42% |       48.99% |  **32.37%** |
 
 **Both models transfer partially.** 78–80% clean is real transfer — far above
 the 50% floor, far below the 97–99% they reach on familiar data. But recall is
@@ -275,7 +275,7 @@ inputs.**
 +1.84pp accuracy, +5.19pp recall, ahead on 11 of 16 conditions.
 
 **And dramatically worse under heavy damage.** Under noise σ0.10 it falls to
-32.37%, *below* the all-real floor, with AUROC **0.1446** — below 0.5 means
+32.37%, _below_ the all-real floor, with AUROC **0.1446** — below 0.5 means
 the ranking is inverted, with AI images sorted below real ones. The same
 inversion appears at resize 0.25× (0.4887). The SID-only model stays between
 72.34% and 78.00% across all 16 conditions with AUROC never under 0.9186.
@@ -284,7 +284,7 @@ inversion appears at resize 0.25× (0.4887). The SID-only model stays between
 accuracy drop alone suggests. The mixed model's false-positive rate reaches
 **48.86%** (blur σ2.0), **59.48%** (resize 0.25×) and **85.37%** (noise
 σ0.10) — at the last, flagging 3,175 of 3,719 genuine photographs as
-AI-generated. Its recall stays *higher* than the SID-only model's throughout;
+AI-generated. Its recall stays _higher_ than the SID-only model's throughout;
 it is not detecting less, it is over-flagging. The two models fail in
 opposite directions, and the mixed model's direction is the one the challenge
 warns against. A fixed five-chain grid on the same split reproduces the
@@ -293,11 +293,11 @@ pattern: mixed leads on mild chains, collapses on the heavy downscale one
 
 ### What the four results say together
 
-| | SID (trained) | CIFAKE (trained, mixed only) | WildFake (unseen) |
-|---|---:|---:|---:|
-| SID-only B (EfficientNet-B0) | 99.78% | 49.41% | 78.00% |
-| SID-only ConvNeXt-Tiny | 99.80% | 49.38% | — |
-| **Mixed SID+CIFAKE B** | **99.31%** | **97.19%** | **79.85%** |
+|                              | SID (trained) | CIFAKE (trained, mixed only) | WildFake (unseen) |
+| ---------------------------- | ------------: | ---------------------------: | ----------------: |
+| SID-only B (EfficientNet-B0) |        99.78% |                       49.41% |            78.00% |
+| SID-only ConvNeXt-Tiny       |        99.80% |                       49.38% |                 — |
+| **Mixed SID+CIFAKE B**       |    **99.31%** |                   **97.19%** |        **79.85%** |
 
 **Backbone choice was not the dominant factor.** Two backbones from
 different families — 4.0M and 27.8M parameters — trained on the same data
@@ -428,18 +428,18 @@ the EfficientNet-B0 models, not the hybrid.
 From `requirements.txt`, which pins each package to the version our final
 environment ran:
 
-| Library | Version | Role |
-|---|---|---|
-| torch | 2.13.0 | model, training loop, AMP |
-| torchvision | 0.28.0 | EfficientNet-B0, transforms |
-| pillow | 12.3.0 | image I/O, degradation transforms |
-| numpy | 2.5.2 | numerics |
-| scikit-learn | 1.9.0 | metrics (AUROC, AUPRC, F1, confusion matrix) |
-| pandas | 3.0.5 | manifest and results handling |
-| matplotlib | 3.11.1 | robustness severity curves |
-| tqdm | 4.70.0 | progress reporting |
-| pyyaml | 6.0.3 | experiment configs |
-| pytest | 9.1.1 | test suite |
+| Library      | Version | Role                                         |
+| ------------ | ------- | -------------------------------------------- |
+| torch        | 2.13.0  | model, training loop, AMP                    |
+| torchvision  | 0.28.0  | EfficientNet-B0, transforms                  |
+| pillow       | 12.3.0  | image I/O, degradation transforms            |
+| numpy        | 2.5.2   | numerics                                     |
+| scikit-learn | 1.9.0   | metrics (AUROC, AUPRC, F1, confusion matrix) |
+| pandas       | 3.0.5   | manifest and results handling                |
+| matplotlib   | 3.11.1  | robustness severity curves                   |
+| tqdm         | 4.70.0  | progress reporting                           |
+| pyyaml       | 6.0.3   | experiment configs                           |
+| pytest       | 9.1.1   | test suite                                   |
 
 No other dependencies. The robustness transforms (JPEG re-encode, Gaussian blur,
 resize-and-upscale, Gaussian noise, colour jitter, centre crop) are implemented
@@ -507,7 +507,7 @@ We would rather state these than have a judge find them.
    open them to check.
 6. **No per-source or per-generator error breakdown was possible.** The `source`
    column in our prediction logs is null in 100% of rows, and `dataset` and
-   `generator` are constant, so we cannot say *which kinds* of image fail.
+   `generator` are constant, so we cannot say _which kinds_ of image fail.
 7. **Single seed, single split.** Small differences between arms cannot be called
    significant.
 8. Model outputs are strongly bimodal — only 7.7–8.3% of predictions fall between
