@@ -360,7 +360,7 @@ have time to run.
   both trained and run on Kaggle
 - **Git / GitHub** — version control, pull-request review across five people
 - **Git Bash on Windows** — local shell
-- **pytest** — automated tests (69 tests, all passing, covering the
+- **pytest** — automated tests (71 tests, all passing, covering the
   augmentation and consistency-loss modules, the metrics, the data pipeline,
   the model builder, the training loop, the evaluation runners and their
   multi-model checkpoint handling, and the inference CLI)

@@ -1,5 +1,7 @@
 # techjam-aigc-detector
 
+**Demo video:** <https://youtu.be/FO-r_WiiEUM>
+
 - [Project overview](#project-overview)
 - [At a glance](#at-a-glance)
 - [Setup and installation](#setup-and-installation)
@@ -54,9 +56,11 @@ should never stand alone as an accusation against a real photograph.
 
 ## At a glance
 
-- **Submit this checkpoint:** `effnet_b0_sid_cifake_experiment_b_best.pt` —
-  EfficientNet-B0 trained on SID_Set **and** CIFAKE
-  ([download](#getting-the-checkpoints)).
+- **Submit this checkpoint:** `best_ultimate_ema_checkpoint.pth` — the
+  Ultimate hybrid, EfficientNet-B0 features fused with DINOv2 ViT-S/14
+  embeddings ([download](#getting-the-checkpoints)). **It needs internet on
+  its first run** (it fetches DINOv2's source via `torch.hub`); for offline
+  evaluation use `effnet_b0_sid_cifake_experiment_b_best.pt` instead.
 - **99.31% on SID, 97.19% on CIFAKE.** Single-dataset models match it on
   their own data but fall to **49.4%** on the generator they never saw —
   chance, on a set where predicting "real" for everything scores 49.31%.
@@ -96,18 +100,32 @@ pip install -r requirements.txt
 
 Run the detector on a folder of images, without reading anything else.
 
-**1. Download the recommended checkpoint** — the mixed SID+CIFAKE model:
+**1. Download the recommended checkpoint** — `best_ultimate_ema_checkpoint.pth`,
+the Ultimate hybrid (~110 MB):
 
-<https://drive.google.com/file/d/1bz3KfWIPr422c7rGM9hYH3zs6wSr7pc7/view>
+<https://drive.google.com/file/d/1_cW9gus31EVLPQYjW9bkCR6jkhVaWM78/view>
 
-Verify it with the SHA-256 in [Getting the checkpoints](#getting-the-checkpoints),
-which also explains why this checkpoint rather than a higher-scoring one.
+> ⚠️ **This checkpoint needs internet access the first time you run it.**
+> Building the hybrid calls `torch.hub.load("facebookresearch/dinov2", ...)`,
+> which downloads DINOv2's source from github.com into `~/.cache/torch/hub/`.
+> **With no internet, the first run fails.** One successful online run primes
+> the cache and it works offline thereafter.
+>
+> **Evaluating offline?** Use `effnet_b0_sid_cifake_experiment_b_best.pt`
+> instead (EfficientNet-B0, ~16 MB, **no network dependency**,
+> <https://drive.google.com/file/d/1bz3KfWIPr422c7rGM9hYH3zs6wSr7pc7/view>) and swap the
+> filename in the command below. It is fully supported and is the checkpoint
+> behind every number in this README.
 
 **2. Run inference:**
 
 ```bash
-python predict.py --input_dir <folder_of_images> --checkpoint effnet_b0_sid_cifake_experiment_b_best.pt --output results/preds.json
+python predict.py --input_dir <folder_of_images> --checkpoint best_ultimate_ema_checkpoint.pth --output results/preds.json
 ```
+
+No `--architecture` flag is needed — the checkpoint records its own.
+[Getting the checkpoints](#getting-the-checkpoints) has both files side by
+side, the SHA-256 to verify against, and why each is recommended when.
 
 The output is a JSON list with one row per image, each exactly
 `{"image_path": ..., "pred": ...}`, where `pred` is the probability the image
@@ -287,8 +305,9 @@ that's added.
 #### Known gap: the mixed SID+CIFAKE manifest is not reproducible from this repo
 
 This matters more than the TODO above suggests, because the **mixed
-SID+CIFAKE model is the checkpoint we recommend submitting** — and the
-manifest behind it was built notebook-side, not by anything committed here.
+SID+CIFAKE model is the offline-fallback checkpoint** — and the one behind
+every SID and CIFAKE number in this README — yet the manifest behind it was
+built notebook-side, not by anything committed here.
 What we can do is record exactly what was done, so the run can be recreated
 by hand:
 
